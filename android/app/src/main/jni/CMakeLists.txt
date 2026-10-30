@@ -39,9 +39,10 @@ target_include_directories(fpdc PRIVATE
 
 # The Dreamcast build is compiled with -ffp-contract=off so that the deterministic physics behaves
 # the same everywhere; keep that, and let the compiler vectorize freely otherwise.
+# no -fvisibility=hidden: native_app_glue's ANativeActivity_onCreate must stay exported, or Android
+# cannot find the entry point of the library
 target_compile_options(fpdc PRIVATE
-    -O3 -Wall -Wno-unused-parameter -Wno-sign-compare -ffp-contract=off -fno-math-errno
-    -fvisibility=hidden)
+    -O3 -Wall -Wno-unused-parameter -Wno-sign-compare -ffp-contract=off -fno-math-errno)
 
 target_link_libraries(fpdc android log EGL GLESv3 aaudio m)
 # native_app_glue provides the entry point; keep it from being dropped by the linker

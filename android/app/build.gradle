@@ -37,23 +37,18 @@ android {
             minifyEnabled false        // no Java to shrink; the game is native
             jniDebuggable false
             debuggable false
+            // Sideloading build: signed with the debug key so that `assembleRelease` gives an APK you can
+            // install. Replace this with your own signingConfig before publishing anything.
+            signingConfig signingConfigs.debug
         }
         debug {
             jniDebuggable true
         }
     }
 
-    // the game data is imported at run time (see FpActivity), not packaged into the APK
-    androidResources {
-        noCompress 'wav'
-    }
+    // the game data is imported at run time (see FpActivity), so nothing large ships in the APK
     buildFeatures {
         buildConfig false
-    }
-    packagingOptions {
-        jniLibs {
-            useLegacyPackaging false    // uncompressed .so in the APK: no extraction on install
-        }
     }
     lint {
         abortOnError false
