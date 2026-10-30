@@ -132,6 +132,16 @@ int ui_gles_init(void) {
     return 0;
 }
 
+void ui_release(void) {
+    if (prog_flat) { glDeleteProgram(prog_flat); prog_flat = 0; }
+    if (prog_sdf) { glDeleteProgram(prog_sdf); prog_sdf = 0; }
+    if (fvbo) { glDeleteBuffers(1, &fvbo); fvbo = 0; }
+    if (svbo) { glDeleteBuffers(1, &svbo); svbo = 0; }
+    if (fvibo) { glDeleteBuffers(1, &fvibo); fvibo = 0; }
+    if (svibo) { glDeleteBuffers(1, &svibo); svibo = 0; }
+    nfq = nsq = 0;
+}
+
 /* ------------------------------------------------------------------ batches */
 static void flush_flat(void) {
     if (!nfq) return;

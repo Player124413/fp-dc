@@ -272,24 +272,31 @@ jobs:
       - name: Crash details
         if: always()
         run: |
-          [ -s out/crash.txt ] || { echo "no crash in the crash buffer"; exit 0; }
-          echo "----- crash buffer -----"
-          grep -E "signal|backtrace|#0[0-9]|Abort|DEBUG" out/crash.txt | head -10 | cut -c1-200 > /tmp/c.txt || true
-          while IFS= read -r l; do echo "  $l"; echo "::warning::$l"; done < /tmp/c.txt
-          # symbolise with the NDK that comes with the runner image (the debug APK keeps its symbols)
+          [ -s out/crash.txt ] || { echo "no crash"; exit 0; }
+          echo "----- crash frames -----"
+          grep -E "#[0-9]{2} pc|Fatal signal|Abort message|backtrace:" out/crash.txt | head -10 | cut -c1-200 > /tmp/f.txt || true
+          while IFS= read -r l; do echo "  $l"; echo "::warning::$l"; done < /tmp/f.txt
+
+      - name: Symbolise the crash
+        if: always()
+        run: |
+          [ -s out/crash.txt ] || { echo "no crash"; exit 0; }
           NDKSTACK=$(ls -d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"/ndk/*/prebuilt/linux-x86_64/bin/ndk-stack 2>/dev/null | head -1)
-          if [ -n "$NDKSTACK" ]; then
-            mkdir -p sym && (cd sym && unzip -oq ../apk/*/app-debug.apk 'lib/*' || true)
-            "$NDKSTACK" -sym sym/lib/x86_64 -dump out/crash.txt 2>/dev/null \
-              | grep -E "#[0-9]+|Abort|signal" | head -12 | cut -c1-200 > /tmp/s.txt || true
-            echo "----- symbolised -----"
-            while IFS= read -r l; do echo "  $l"; echo "::warning::sym: $l"; done < /tmp/s.txt
-          else
-            echo "no ndk-stack in the image; using the tombstone"
+          echo "ndk-stack: ${NDKSTACK:-none}"
+          mkdir -p sym
+          (cd sym && unzip -oq ../apk/*/app-debug.apk 'lib/*' 2>/dev/null || true)
+          if [ -z "$NDKSTACK" ]; then
+            echo "the image has no NDK; asking the device for the tombstone"
             timeout 60 adb shell dumpsys dropbox --print SYSTEM_TOMBSTONE 2>/dev/null \
-              | grep -E "signal|#0[0-9]|backtrace" | head -10 | cut -c1-200 \
+              | grep -E "#[0-9]{2} pc|signal" | head -10 | cut -c1-200 \
               | while IFS= read -r l; do echo "  $l"; echo "::warning::tomb: $l"; done
+            exit 0
           fi
+          find sym -name '*.so' | head -5
+          "$NDKSTACK" -sym sym -dump out/crash.txt 2>&1 | grep -E "#[0-9]+|Abort|signal" | head -12 \
+            | cut -c1-200 > /tmp/sym.txt || true
+          echo "----- symbolised -----"
+          while IFS= read -r l; do echo "  $l"; echo "::warning::sym: $l"; done < /tmp/sym.txt
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -23,6 +23,7 @@
 #include <android_native_app_glue.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
+#include "ui.h"          /* ui_gles_init()/ui_release() of the shell renderer */
 #include <jni.h>
 #include <math.h>
 #include <stdarg.h>
@@ -364,6 +365,7 @@ static void gfx_surface_down(void) {
 static void gfx_teardown(void) {
     gfx_surface_down();
     rgl_shutdown();
+    ui_release();
     rgl_up = 0;
     if (ectx != EGL_NO_CONTEXT) { eglMakeCurrent(edpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT); eglDestroyContext(edpy, ectx); ectx = EGL_NO_CONTEXT; }
     if (edpy != EGL_NO_DISPLAY) { eglTerminate(edpy); edpy = EGL_NO_DISPLAY; }
@@ -400,6 +402,15 @@ static int gfx_init(void) {
     if (!eglMakeCurrent(edpy, esurf, esurf, ectx)) { LOGE("eglMakeCurrent failed"); eglDestroySurface(edpy, esurf); esurf = EGL_NO_SURFACE; return -1; }
     eglQuerySurface(edpy, esurf, EGL_WIDTH, &win_w);
     eglQuerySurface(edpy, esurf, EGL_HEIGHT, &win_h);
+    if (win_w < 32 || win_h < 32) {
+        /* the surface exists but has not been laid out yet (it happens on the first frame and on
+         * some devices); initialising the renderer for a 1x1 window only produces garbage */
+        LOGE("surface %dx%d is not laid out yet", win_w, win_h);
+        eglMakeCurrent(edpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        eglDestroySurface(edpy, esurf);
+        esurf = EGL_NO_SURFACE;
+        return -1;
+    }
     eglSwapInterval(edpy, 1);
     dp_scale = density_scale();
     shell_set_screen(win_w, win_h, dp_scale);

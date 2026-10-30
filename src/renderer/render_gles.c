@@ -25,6 +25,7 @@
 #include "../fp.h"
 #include "render_gles.h"
 #include "twiddle.h"
+#include "../platform/android/ui.h"   /* ui_gles_init(): the shell UI shares the GL context */
 #include <math.h>
 
 #define MAXTEX 192
@@ -207,6 +208,7 @@ static void palette_upload(int grp) {
 }
 
 int rgl_init(void) {
+    if (ui_gles_init() != 0) { plat_log("gles: the UI backend failed to initialise\n"); return -1; }
     prog_world = compile(VS_WORLD, FS_WORLD, "world");
     prog_present = compile(VS_PRESENT, FS_PRESENT, "present");
     if (!prog_world || !prog_present) return -1;

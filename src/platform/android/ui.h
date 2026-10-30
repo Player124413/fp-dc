@@ -98,6 +98,11 @@ float ui_text_c(float cx, float y, float px, uint32_t rgba, const char *s);    /
 float ui_text_r(float rx, float y, float px, uint32_t rgba, const char *s);    /* right edge at rx */
 float ui_text_w(float px, const char *s);
 #define UI_TEXT_H(px) (7.0f * (px))
+
+/* OpenGL ES backend (ui_gles.c): builds the two programs and the vertex buffers. Needs a current
+ * context; called from rgl_init(). */
+int   ui_gles_init(void);
+void  ui_release(void);
 /* text with a 1-font-pixel drop shadow: readable over the game picture without a panel */
 void  ui_text_sh(float x, float y, float px, uint32_t rgba, uint32_t shadow, const char *s);
 
