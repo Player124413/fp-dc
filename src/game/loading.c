@@ -53,6 +53,9 @@ void loading_begin(const char *label) {
     loading_draw();
 }
 
+/* the Android port's overlay asks this: no touch pad over the loading screen */
+int loading_is_active(void) { return active; }
+
 /* from plat_load_file between reads: keeps the crystal spinning (about 30 fps) */
 void loading_tick(void) {
     if (active && plat_time_us() - t_last >= 33000) loading_draw();

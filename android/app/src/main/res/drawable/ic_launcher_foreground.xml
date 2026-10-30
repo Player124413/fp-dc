@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon foreground: the twin chevrons of the touch pad (the port's mark), drawn as a
+     vector so no bitmap asset is needed. 108dp canvas, 72dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFE4552F"
+        android:pathData="M34,40 L54,56 L74,40 L74,50 L54,66 L34,50 Z" />
+    <path
+        android:fillColor="#FFF2F2F2"
+        android:pathData="M40,64 L54,76 L68,64 L68,72 L54,84 L40,72 Z" />
+</vector>

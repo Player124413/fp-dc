@@ -154,6 +154,7 @@ const uint8_t *vmuscr_current(void);                         /* stop every sound
 void   loading_begin(const char *label);   /* label: load profiler (loadprof.c) */
 void   loading_tick(void);
 void   loading_end(void);
+int    loading_is_active(void);   /* the loading screen owns the frame (port overlays stay off) */
 /* load profiler (src/game/loadprof.c) */
 typedef struct { int on; uint64_t open_us, read_us, upload_us, snd_us, music_us, obj_us, draw_us, decode_us;
                  uint64_t bytes, tex_bytes, alloc_bytes, skip_bytes; uint32_t nfiles, ntex, nsnd, ndraw, nalloc, nskip, npacked; } loadprof_t;

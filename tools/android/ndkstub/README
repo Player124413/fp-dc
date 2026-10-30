@@ -1,0 +1,3 @@
+Stub NDK headers, only for `make check-android` on a machine without the Android NDK.
+The two GLES backends (src/renderer/render_gles.c, ui_gles.c) and the platform layer are compiled with
+`-fsyntax-only` against these to catch typos and type errors; real builds use the NDK headers.

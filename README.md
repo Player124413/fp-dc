@@ -39,3 +39,24 @@ Details, troubleshooting and the developer build (KallistiOS toolchain, `make &&
 A PC version of the same code (SDL2; Linux x86_64 and 32-bit Windows) lives on the
 **[`pc-port` branch](https://github.com/Wangblows2000/fp-dc/tree/pc-port)**. It has the same drag-and-drop builders:
 drop `Assets.dat` onto `build_win32.bat` to get a working `fpdc.exe`, or onto `build_linux.sh` for a Linux executable.
+
+## Android port
+
+A native Android port of the same code (OpenGL ES 3, AAudio; no Java game code and no emulator) lives in
+**[`android/`](android/README.md)**. It is a platform and renderer layer only: the game in `src/game` is the
+same code the Dreamcast build runs, drawn through `src/renderer/render_gles.c` at the native 426x240 and
+upscaled by the GPU.
+
+- **Launcher**: PLAY / CONTROLS / SETTINGS / ABOUT / DATA screens drawn by the port's own immediate-mode UI
+  (`src/platform/android/`), with the data import, the port settings and the controls editor in them.
+- **Touch controls**: a floating analogue stick, JUMP / ATTACK / SPECIAL / START / GUARD / GEAR buttons, four
+  presets, and an in-game editor where every control is dragged, resized and faded -- the layout is stored in
+  `port.txt` and the editor opens from the GEAR button or the BACK key while playing. Gamepads work at the same
+  time (the pad and a controller are ORed together).
+- **Data**: the APK ships no game data. Convert your `Assets.dat` with the normal builder, pack `converted/` with
+  `python3 tools/android/make_android_data.py converted -o fpdc-data.zip`, copy the zip to the phone and use
+  **IMPORT DATA** in the launcher.
+
+Host-side checks (no NDK, no device): `make -C tools/android check` -- syntax-checks the GLES backends against
+stub NDK headers, verifies the Dreamcast texture twiddle against `tools/twiddle_disc.py`, and renders every
+launcher screen to PNG with the shared UI code. Details in **[android/README.md](android/README.md)**.

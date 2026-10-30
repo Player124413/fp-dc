@@ -33,3 +33,8 @@ output/
 # the project's prebuilt programs and tools are committed (D-119): never ignored
 !/prebuilt/
 !/prebuilt/**
+tools/preview/out/
+tools/preview/fpdc_preview
+android/.gradle/
+android/app/build/
+android/.idea/

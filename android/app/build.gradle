@@ -1,0 +1,61 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.fpdc.port'
+    compileSdk 34
+    ndkVersion '26.1.10909125'      // any r26/r27 works; CMake 3.22+ ships with the SDK
+
+    defaultConfig {
+        applicationId 'com.fpdc.port'
+        minSdk 26                       // AAudio (the low-latency output) starts at API 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+        ndk {
+            // 64-bit first (every phone since 2019); armeabi-v7a for older ones; x86_64 for emulators
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=none', '-DCMAKE_BUILD_TYPE=Release'
+                cFlags '-O3 -ffp-contract=off'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/jni/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false        // no Java to shrink; the game is native
+            jniDebuggable false
+            debuggable false
+        }
+        debug {
+            jniDebuggable true
+        }
+    }
+
+    // the game data is imported at run time (see FpActivity), not packaged into the APK
+    androidResources {
+        noCompress 'wav'
+    }
+    buildFeatures {
+        buildConfig false
+    }
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging false    // uncompressed .so in the APK: no extraction on install
+        }
+    }
+    lint {
+        abortOnError false
+    }
+}

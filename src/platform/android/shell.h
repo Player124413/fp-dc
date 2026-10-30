@@ -1,0 +1,72 @@
+/* The Android shell: everything the port shows outside the game picture (launcher, settings,
+ * controls editor, touch pad) plus the seam to the platform.
+ *
+ * Two sides meet here:
+ *   - the shell (shell.c, launcher.c, ctl_editor.c, pad_draw.c, widgets.c) is portable C that only
+ *     draws through ui.h and reads input through shell_touch().  tools/preview links it against a
+ *     stub platform, so every screen is rendered by CI into PNG;
+ *   - the platform (plat_android.c) implements the shell_* services below: files in the app's
+ *     storage, vibration, the SAF data import through Java, and starting the engine.
+ * The stub used by the preview/tests (tools/preview/shell_stub.c) is the reference for what a
+ * platform must provide. */
+#ifndef FP_ANDROID_SHELL_H
+#define FP_ANDROID_SHELL_H
+
+#include "touch.h"
+
+enum { SCREEN_HOME = 0, SCREEN_SETTINGS, SCREEN_CONTROLS, SCREEN_ABOUT, SCREEN_DATA, SCREEN_N };
+
+/* ---------------------------------------------------------------- platform services */
+void  shell_log(const char *fmt, ...);
+void  shell_vibrate(int ms, int amplitude);          /* amplitude 1..255 (0 = the device default) */
+int   shell_data_ok(void);                           /* the imported data package is complete */
+long  shell_data_bytes(void);                        /* its size in bytes (0 when missing) */
+const char *shell_data_dir(void);                    /* absolute path, shown to the user */
+void  shell_data_import(void);                       /* open the system file picker (async) */
+int   shell_data_import_status(void);                /* 0 idle, 1 importing, 2 done, <0 error code */
+const char *shell_data_import_message(void);         /* what to show while/after importing */
+int   shell_file_read(const char *name, char *buf, int cap);
+int   shell_file_write(const char *name, const char *data, int len);
+void  shell_launch_game(void);                       /* leave the shell, start the engine */
+void  shell_exit_app(void);
+const char *shell_build_version(void);
+/* device facts for the ABOUT / data screens (filled by the platform, may be empty) */
+void  shell_device_info(char *buf, int cap);
+
+/* ---------------------------------------------------------------- shell state */
+void  shell_set_screen(int w, int h, float dp_scale);   /* the platform reports the window each resize */
+void  shell_init(void);                              /* load port.txt (settings + layout) */
+void  shell_reset(void);                             /* tests/preview: forget all state */
+void  shell_frame(float dt);                         /* launcher screens: update + draw */
+void  shell_draw_overlay(float dt);                  /* after the game picture: pad and in-game editor */
+int   shell_active(void);                            /* 1: the launcher owns the screen (engine not started) */
+void  shell_touch(int phase, int id, float x, float y);   /* 0 down, 1 move, 2 up (display pixels) */
+int   shell_take_launch(void);                       /* 1 once: the platform starts the engine */
+int   shell_take_exit(void);                         /* 1 once: the platform finishes the activity */
+int   shell_game_paused(void);                       /* 1: the in-game editor is open, skip game_update */
+/* the game's input for this tick: touch pad + gamepad, edges included (the platform ORs the pad) */
+void  shell_game_input(input_t *in);
+void  shell_fps(float fps);                          /* the platform's measured frame rate (overlay) */
+void  shell_set_in_game(int on);
+int   shell_in_game(void);
+int   shell_open(int screen);                        /* switch launcher screen (tests/preview) */
+int   shell_screen(void);
+void  shell_editor_open(int on);
+int   shell_editor(void);
+/* port settings (persisted in port.txt through cfg.c) */
+int   shell_get_int(const char *key, int def);
+void  shell_set_int(const char *key, int v);
+float shell_get_float(const char *key, float def);
+void  shell_set_float(const char *key, float v);
+void  shell_save(void);                              /* write port.txt now */
+/* number of frames drawn since shell_init (animation clock; the preview uses it too) */
+int   shell_ticks(void);
+
+/* ---------------------------------------------------------------- drawing pieces */
+void  launcher_draw(float dt, int screen);
+void  editor_open(int from_game);                    /* ctl_editor.c: reset the selection */
+void  editor_draw(float dt);
+void  editor_touch(int phase, int id, float x, float y);
+void  pad_draw(const touch_layout_t *l, int active_mask, int alpha_mul);
+
+#endif

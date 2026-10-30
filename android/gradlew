@@ -1,0 +1,6 @@
+#!/bin/sh
+# Placeholder: run `gradle wrapper` once (or open the project in Android Studio) to generate the real
+# wrapper (gradle/wrapper/gradle-wrapper.jar + gradlew).  The wrapper jar is a binary, so it is not
+# committed here.
+echo "android/gradlew: run 'gradle wrapper --gradle-version 8.7' in android/ first (or use Android Studio)." >&2
+exit 1

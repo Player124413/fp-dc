@@ -1,0 +1,5 @@
+// Top-level build file. Android Gradle Plugin 8.x needs JDK 17 and the Android SDK (compileSdk 34);
+// the NDK is only needed to build the native side (see app/build.gradle).
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}
