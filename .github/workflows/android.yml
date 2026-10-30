@@ -54,7 +54,7 @@ jobs:
   apk:
     name: Build APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -63,26 +63,40 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: NDK, CMake, platform, build tools
+      # Only first-party actions plus plain shell: the runner image already ships the Android SDK, so
+      # nothing here depends on a third-party action being downloadable.
+      - name: Android SDK, NDK, CMake
         run: |
           set -o pipefail
-          { yes | sdkmanager --licenses > /dev/null 2>&1 || true; } 
-          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" \
-            "ndk;26.1.10909125" "cmake;3.22.1" 2>&1 | tee /tmp/sdk.log | tail -5
-          echo "ndk: $(ls "$ANDROID_HOME/ndk" 2>&1)"
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$SDK" >> $GITHUB_ENV
+          SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          echo "sdkmanager: $SM"
+          "$SM" --version
+          yes | "$SM" --licenses > /dev/null 2>&1 || true
+          "$SM" --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" \
+                 "cmake;3.22.1" "ndk;26.1.10909125" 2>&1 | tail -20
+          echo "--- installed ndk:"; ls "$SDK/ndk" || true
+          echo "--- installed cmake:"; ls "$SDK/cmake" || true
+          NDK="$(ls "$SDK/ndk" 2>/dev/null | head -1)"
+          echo "FP_NDK=$NDK" >> $GITHUB_ENV
 
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          build-root-directory: android
-          gradle-version: '8.7'
+      - name: Gradle 8.7
+        run: |
+          set -o pipefail
+          curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q /tmp/gradle.zip -d "$HOME"
+          echo "$HOME/gradle-8.7/bin" >> $GITHUB_PATH
+          "$HOME/gradle-8.7/bin/gradle" --version | head -6
 
       - name: Build the APKs (debug and release)
+        env:
+          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g
         run: |
           set -o pipefail
-          gradle -p android --no-daemon --warning-mode all assembleDebug assembleRelease 2>&1 | tee /tmp/build.log
+          gradle --no-daemon --warning-mode all -p android \
+                 ${FP_NDK:+-PfpNdk=$FP_NDK} assembleDebug assembleRelease 2>&1 | tee /tmp/build.log
 
       - name: Check what went into the APK
         run: |
@@ -92,15 +106,15 @@ jobs:
             unzip -l "$apk" | grep -E 'lib/.*/libfpdc\.so' || { echo "::error::the native library is missing from $apk"; exit 1; }
             unzip -l "$apk" | grep -q 'classes.dex' || { echo "::error::no classes.dex in $apk"; exit 1; }
           done
+          ls -la android/app/build/outputs/apk/*/*.apk
 
       - name: Report
         if: failure()
         run: |
-          for f in /tmp/sdk.log /tmp/build.log; do
-            [ -f "$f" ] || continue
-            grep -E "error:|FAILURE|What went wrong|Caused by|Could not|Execution failed|not found|CMake Error|fatal error" "$f" |
+          if [ -f /tmp/build.log ]; then
+            grep -E "error:|FAILURE|What went wrong|Caused by|Could not|Execution failed|CMake Error|fatal error|ndk" /tmp/build.log |
               head -40 | cut -c1-300 | while IFS= read -r l; do echo "::error::$l"; done
-          done
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -108,6 +122,7 @@ jobs:
           path: |
             android/app/build/outputs/apk/debug/app-debug.apk
             android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
           retention-days: 30
 
   # ------------------------------------------------------------------------------------- emulator run

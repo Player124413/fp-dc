@@ -5,7 +5,9 @@ plugins {
 android {
     namespace 'com.fpdc.port'
     compileSdk 34
-    ndkVersion '26.1.10909125'      // any r26/r27 works; CMake 3.22+ ships with the SDK
+    // any r26/r27 works; CMake 3.22+ ships with the SDK. -PfpNdk=<version> overrides it (CI does when
+    // the pinned one is not installed).
+    ndkVersion project.findProperty('fpNdk') ?: '26.1.10909125'
 
     defaultConfig {
         applicationId 'com.fpdc.port'
