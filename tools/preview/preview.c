@@ -106,6 +106,15 @@ static void scenario_controls(void) {
     }
 }
 
+static void scenario_data(void) {
+    scenario_begin();
+    printf("data: open=%d\n", shell_open(SCREEN_DATA));
+    for (frame_no = 0; frame_no < 8; frame_no++) {
+        shell_frame(1.0f / 60.0f);
+        dump("data");
+    }
+}
+
 static void scenario_editor_touch(void) {
     scenario_begin();
     shell_open(SCREEN_CONTROLS);
@@ -186,7 +195,7 @@ int main(int argc, char **argv) {
     struct { const char *name; void (*fn)(void); } sc[] = {
         { "font", scenario_font },       { "home", scenario_home },     { "settings", scenario_settings },
         { "controls", scenario_controls }, { "editorkit", scenario_editor_touch }, { "ingame", scenario_ingame },
-        { "pressed", scenario_pressed },
+        { "pressed", scenario_pressed }, { "data", scenario_data },
     };
     int any = 0, all = argc == 2;
     for (int i = 2; i < argc; i++) if (!strcmp(argv[i], "all")) all = 1;

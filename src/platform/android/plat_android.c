@@ -18,6 +18,8 @@
  * pad overlay, FPS, eglSwapBuffers).  The loading screen also goes through r_end(), so it is visible
  * during loads without the engine knowing anything about Android. */
 #include <android/log.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include <android_native_app_glue.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
@@ -165,6 +167,28 @@ JNIEXPORT void JNICALL Java_com_fpdc_port_FpActivity_nativeImportProgress(JNIEnv
 const char *plat_data_root(void) { return dir_data; }
 const char *plat_files_root(void) { return dir_files; }
 
+/* size of a data tree copied by other means than the importer (file manager, adb push): the importer
+ * writes its own marker, a hand-copied folder gets measured once at startup */
+static long dir_bytes(const char *path, int depth, long *budget) {
+    if (depth > 6 || *budget <= 0) return 0;
+    DIR *d = opendir(path);
+    if (!d) return 0;
+    long total = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        char p[900];
+        int n = snprintf(p, sizeof p, "%s/%s", path, e->d_name);
+        if (n <= 0 || n >= (int)sizeof p) continue;
+        struct stat st;
+        if (stat(p, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) total += dir_bytes(p, depth + 1, budget);
+        else { total += (long)st.st_size; if (--(*budget) <= 0) break; }
+    }
+    closedir(d);
+    return total;
+}
+
 /* the importer writes <data>/.fpdc-data ("bytes=<n> files=<n>") after a successful copy */
 static int data_probe(void) {
     char p[600];
@@ -188,7 +212,11 @@ static int data_probe(void) {
         fclose(f);
         if (n > 32) data_ok = 1;
     }
-    if (data_ok && data_bytes <= 0) data_bytes = 1;
+    if (data_ok && data_bytes <= 0) {
+        long budget = 40000;                        /* files to stat at most: a broken tree cannot stall the boot */
+        data_bytes = dir_bytes(dir_data, 0, &budget);
+        if (data_bytes <= 0) data_bytes = 1;
+    }
     return data_ok;
 }
 

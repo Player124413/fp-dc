@@ -329,21 +329,21 @@ static void about(void) {
 /* ------------------------------------------------------------------ DATA */
 static void data_screen(void) {
     modal_header("GAME DATA");
-    float px = ui_dp(1.4f), y = TOP;
+    float px = ui_dp(1.3f), y = TOP;
     float w = (float)ui_w() - MARGIN * 2;
     int st = shell_data_import_status();
     const char *msg = shell_data_import_message();
-    ui_text(MARGIN, y, px, UI_DIM, "THE PORT HAS NO GAME DATA OF ITS OWN.");
-    y += UI_TEXT_H(px) + ui_dp(5);
-    ui_text(MARGIN, y, px, UI_DIM, "ON A PC, FROM A CONVERTED DATA FOLDER:");
-    y += UI_TEXT_H(px) + ui_dp(5);
-    ui_text(MARGIN, y, px, UI_ACCENT, "  python3 tools/android/make_android_data.py --disc build/disc");
-    y += UI_TEXT_H(px) + ui_dp(5);
-    ui_text(MARGIN, y, px, UI_DIM, "COPY fpdc_data.zip TO THE DEVICE, THEN:");
-    y += UI_TEXT_H(px) + ui_dp(18);
-    if (w_button(ID_DATA + 0, MARGIN, y, ui_is_wide() ? ui_dp(300) : w, ui_dp(46), "IMPORT fpdc_data.zip", W_PRIMARY, st != 1))
+    ui_text(MARGIN, y, px, UI_DIM, "THE PORT HAS NO GAME DATA OF ITS OWN: USE YOUR OWN COPY.");
+    y += UI_TEXT_H(px) + ui_dp(4);
+    ui_text(MARGIN, y, px, UI_DIM, "ON A PC, ONE COMMAND TURNS Assets.dat INTO A PACKAGE:");
+    y += UI_TEXT_H(px) + ui_dp(3);
+    ui_text(MARGIN, y, px, UI_ACCENT, "  python3 tools/builder/fpbuild.py android Assets.dat");
+    y += UI_TEXT_H(px) + ui_dp(4);
+    ui_text(MARGIN, y, px, UI_DIM, "THEN COPY fpdc-data.zip TO THE PHONE AND TAP:");
+    y += UI_TEXT_H(px) + ui_dp(10);
+    if (w_button(ID_DATA + 0, MARGIN, y, ui_is_wide() ? ui_dp(300) : w, ui_dp(44), "IMPORT fpdc-data.zip", W_PRIMARY, st != 1))
         shell_data_import();
-    y += ui_dp(60);
+    y += ui_dp(56);
     if (st == 1) ui_text(MARGIN, y, px, UI_ACCENT, msg && *msg ? msg : "IMPORTING...");
     else if (st < 0) ui_text(MARGIN, y, px, UI_BAD, msg && *msg ? msg : "IMPORT FAILED");
     else if (shell_data_ok()) {
@@ -351,9 +351,11 @@ static void data_screen(void) {
         snprintf(b, sizeof b, "READY: %ld MB OF LEVEL, UI AND AUDIO DATA", shell_data_bytes() / (1024 * 1024));
         ui_text(MARGIN, y, px, UI_OK, b);
     } else ui_text(MARGIN, y, px, UI_WARN, "NO DATA PACKAGE IMPORTED YET");
-    y += UI_TEXT_H(px) + ui_dp(12);
-    w_info(MARGIN, y, w, ui_dp(36), "APP STORAGE", shell_data_dir());
-    y += ui_dp(46);
+    y += UI_TEXT_H(px) + ui_dp(10);
+    w_info(MARGIN, y, w, ui_dp(34), "APP STORAGE", shell_data_dir());
+    y += ui_dp(44);
+    ui_text(MARGIN, y, px, 0x668a9ac0, "OR UNPACK THE PACKAGE THERE (levels.txt DIRECTLY INSIDE data/).");
+    y += UI_TEXT_H(px) + ui_dp(3);
     ui_text(MARGIN, y, px, 0x668a9ac0, "IMPORTING AGAIN REPLACES THE DATA; A FAILED IMPORT LEAVES IT UNTOUCHED.");
 }
 
