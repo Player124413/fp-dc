@@ -249,12 +249,12 @@ jobs:
           # The run log is not always downloadable, so the interesting lines become annotations:
           # a dozen warnings from the tail of the log (that is where a crash leaves its trace).
           echo "----- the port's own log -----"
-          grep -E "^[A-Z]/fpdc|AndroidRuntime|F DEBUG|libc *:|eglCodec|OpenGLRenderer|Choreographer" out/logcat.txt \
-            | tail -12 | cut -c1-200 > /tmp/lines.txt || true
+          cat out/logcat.txt out/crash.txt | grep -E "fpdc|AndroidRuntime|DEBUG|libc|Fatal|signal|Abort|eglCodec" \
+            | tail -10 | cut -c1-220 > /tmp/lines.txt || true
           while IFS= read -r l; do echo "  $l"; echo "::warning::$l"; done < /tmp/lines.txt
           if [ -s out/crash.txt ]; then
             echo "----- crash buffer -----"
-            tail -6 out/crash.txt | cut -c1-200 | while IFS= read -r l; do echo "  $l"; done
+            head -8 out/crash.txt | cut -c1-200 | while IFS= read -r l; do echo "  $l"; echo "::warning::crash: $l"; done
           fi
 
           # BACK must not kill the app

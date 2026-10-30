@@ -408,9 +408,11 @@ static int gfx_init(void) {
         if (rgl_init() != 0) { LOGE("renderer init failed"); return -1; }
         r_init();
         rgl_up = 1;
+        plat_log("gfx: renderer inited");
     }
     shell_log("GL: %dx%d  %.2fx  %s", win_w, win_h, (double)dp_scale, (const char *)glGetString(GL_VERSION));
     gfx_ready = 1;
+    plat_log("gfx: ready %dx%d", win_w, win_h);
     return 0;
 }
 
@@ -420,10 +422,14 @@ static void apply_settings(void) {
     int filt = shell_get_int("render.filter", 1);
     int lb = shell_get_int("video.letterbox", 1);
     int scan = shell_get_int("render.scanlines", 0);
+    plat_log("apply: mode %d", mode);
     rgl_set_mode(mode, filt, lb, scan);   /* the port's letterbox is the upscale's; the game's own
                                            * widescreen option (r_set_letterbox) stays the game's */
+    plat_log("apply: audio");
     snd_master(shell_get_int("audio.music", 80), shell_get_int("audio.sfx", 90));
+    plat_log("apply: keepon");
     keep_screen_on(shell_get_int("sys.keepon", 1));
+    plat_log("apply: done");
 }
 
 /* the end of a drawn frame: upscale the view, draw the touch pad, present */
