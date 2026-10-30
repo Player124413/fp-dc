@@ -143,6 +143,11 @@ jobs:
           name: fpdc-apk
           path: apk
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
@@ -153,32 +158,48 @@ jobs:
 
       - name: Emulator and system image
         run: |
-          set -o pipefail
           SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           echo "ANDROID_HOME=$SDK" >> $GITHUB_ENV
+          echo "$SDK/platform-tools" >> $GITHUB_PATH
+          echo "$SDK/emulator" >> $GITHUB_PATH
+          echo "$SDK/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "java: $(command -v java || echo MISSING)"
+          ls "$SDK" || true
           SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SM" ] || { echo "::error::no sdkmanager at $SM"; exit 1; }
           yes | "$SM" --licenses > /dev/null 2>&1 || true
-          "$SM" --install "platform-tools" "emulator" "system-images;android-33;default;x86_64" 2>&1 | tail -10
-          echo "no" | "$SDK/cmdline-tools/latest/bin/avdmanager" create avd -n fp -k "system-images;android-33;default;x86_64" --force 2>&1 | tail -5
-          "$SDK/cmdline-tools/latest/bin/avdmanager" list avd | head -20
+          if ! "$SM" --install "platform-tools" "emulator" "system-images;android-33;default;x86_64" > /tmp/sdk.log 2>&1; then
+            echo "::error::sdkmanager install failed: $(tail -3 /tmp/sdk.log | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "installed: $(grep -c . /tmp/sdk.log) lines of output"
+          AVDM="$SDK/cmdline-tools/latest/bin/avdmanager"
+          [ -x "$AVDM" ] || { echo "::error::no avdmanager at $AVDM"; exit 1; }
+          if ! echo no | "$AVDM" create avd -n fp -k "system-images;android-33;default;x86_64" --force > /tmp/avd.log 2>&1; then
+            echo "::error::avdmanager failed: $(tail -3 /tmp/avd.log | tr '\n' ' ')"
+            exit 1
+          fi
+          "$AVDM" list avd | head -10
 
       - name: Boot
         run: |
-          set -o pipefail
           SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export PATH="$SDK/platform-tools:$SDK/emulator:$PATH"
+          command -v adb || { echo "::error::adb not found"; exit 1; }
           nohup "$SDK/emulator/emulator" -avd fp -no-window -no-audio -no-boot-anim -no-snapshot \
                 -gpu swiftshader_indirect -camera-back none -camera-front none -accel auto \
                 > /tmp/emulator.log 2>&1 &
-          adb wait-for-device
+          adb wait-for-device || { echo "::error::adb wait-for-device failed"; tail -20 /tmp/emulator.log; exit 1; }
+          ok=0
           for i in $(seq 1 90); do
             b=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
-            [ "$b" = "1" ] && { echo "booted after ~$((i*4))s"; break; }
+            if [ "$b" = "1" ]; then echo "booted after ~$((i*4))s"; ok=1; break; fi
             sleep 4
           done
-          adb shell getprop sys.boot_completed | tr -d '\r' | grep -q 1 || {
-            echo "::error::the emulator did not boot"; tail -40 /tmp/emulator.log; exit 1; }
-          adb shell settings put global window_animation_scale 0 || true
-          adb shell settings put global transition_animation_scale 0 || true
+          if [ "$ok" != "1" ]; then
+            echo "::error::the emulator did not boot: $(tail -5 /tmp/emulator.log | tr '\n' ' ')"
+            exit 1
+          fi
           adb shell wm size
           adb shell wm density
 
@@ -243,14 +264,21 @@ jobs:
           set -e
           ls -la apk
           TAG=android-build
-          gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 || \
-            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --prerelease \
-              --title "Android build" \
-              --notes "Newest APK of the Android port, rebuilt from every push. Install app-release.apk (sideload); the game data is imported in the launcher (see android/README.md)."
-          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" \
-            apk/app-release.apk apk/app-debug.apk --clobber
-          gh release edit "$TAG" -R "$GITHUB_REPOSITORY" \
-            --notes "Newest APK of the Android port. Built from $SHA on branch $BRANCH.
+          if ! out=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" 2>&1); then
+            echo "(no release yet: $out)"
+            if ! out=$(gh release create "$TAG" -R "$GITHUB_REPOSITORY" --prerelease \
+                 --title "Android build" --notes "Newest APK of the Android port." 2>&1); then
+              echo "::error::gh release create: $(echo "$out" | head -3 | tr '\n' ' ')"
+              exit 1
+            fi
+          fi
+          if ! out=$(gh release upload "$TAG" -R "$GITHUB_REPOSITORY" apk/app-release.apk apk/app-debug.apk --clobber 2>&1); then
+            echo "::error::gh release upload: $(echo "$out" | head -3 | tr '\n' ' ')"
+            exit 1
+          fi
+          gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --prerelease \
+            --notes "Newest APK of the Android port. Built from $SHA (branch $BRANCH).
 
           Install app-release.apk (sideload). The APK ships no game data: convert your own Assets.dat
           (python3 tools/builder/fpbuild.py android Assets.dat) and use IMPORT DATA in the launcher."
+          echo "release: ${{ github.server_url }}/$GITHUB_REPOSITORY/releases/tag/$TAG"
