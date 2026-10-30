@@ -163,6 +163,13 @@ jobs:
           echo "$SDK/platform-tools" >> $GITHUB_PATH
           echo "$SDK/emulator" >> $GITHUB_PATH
           echo "$SDK/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          # pin where the AVD lives, or avdmanager and the emulator disagree (they then look in
+          # $ANDROID_AVD_HOME, $ANDROID_SDK_HOME/avd and $HOME/.android/avd)
+          export ANDROID_USER_HOME="$HOME/.android"
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_USER_HOME=$ANDROID_USER_HOME" >> $GITHUB_ENV
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> $GITHUB_ENV
           echo "java: $(command -v java || echo MISSING)"
           ls "$SDK" || true
           SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
@@ -180,12 +187,15 @@ jobs:
             exit 1
           fi
           "$AVDM" list avd | head -10
+          ls -la "$ANDROID_AVD_HOME" || true
+          [ -f "$ANDROID_AVD_HOME/fp.ini" ] || { echo "::error::avdmanager did not write $ANDROID_AVD_HOME/fp.ini"; exit 1; }
 
       - name: Boot
         run: |
           SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           export PATH="$SDK/platform-tools:$SDK/emulator:$PATH"
           command -v adb || { echo "::error::adb not found"; exit 1; }
+          "$SDK/emulator/emulator" -list-avds 2>&1 | head -5
           nohup "$SDK/emulator/emulator" -avd fp -no-window -no-audio -no-boot-anim -no-snapshot \
                 -gpu swiftshader_indirect -camera-back none -camera-front none -accel auto \
                 > /tmp/emulator.log 2>&1 &
