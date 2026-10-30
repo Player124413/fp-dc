@@ -55,6 +55,7 @@ ifdef FP_DEBUG_SELECT
 KOS_CFLAGS += -DFP_DEBUG_SELECT
 endif
 ifdef FP_PERF_BASELINE
+KOS_CFLAGS += -DFP_DREAMCAST   # DC-only paths (the load profiler's mallinfo/pvr queries)
 KOS_CFLAGS += -DFP_PERF_BASELINE   # A/B perf measurement only: old full-scan sensor queries (touch src/game/objects.c)
 endif
 ifdef FP_DEBUG_ACTJUMP

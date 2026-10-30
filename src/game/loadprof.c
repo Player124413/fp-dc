@@ -3,8 +3,10 @@
  * Built into every build (a few timer reads per file); one plat_log line per load. On the DC the
  * clock is the SH4 timer, so in Flycast this is emulated time (GD-ROM DMA at 1.8 MB/s, no seek time). */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#ifndef FP_HOST_ENV
+#if defined(FP_DREAMCAST) || defined(_arch_dreamcast) || defined(__DREAMCAST__)
+#define LP_DREAMCAST 1
 #include <malloc.h>
 #include <dc/pvr.h>
 #endif
@@ -30,9 +32,11 @@ uint32_t lp_end(void) {
     unsigned kb = (unsigned)(LP.bytes / 1024);
     unsigned rate = LP.read_us ? (unsigned)(LP.bytes * 1000000ull / LP.read_us / 1024) : 0;
     unsigned heap_kb = 0, vram_kb = 0;
-#ifndef FP_HOST_ENV
+#ifdef LP_DREAMCAST
     { struct mallinfo mi = mallinfo(); heap_kb = (unsigned)(mi.uordblks / 1024); }   /* RAM in use after the load */
     vram_kb = (unsigned)(pvr_mem_available() / 1024);                                  /* largest free VRAM block */
+#else
+    (void)heap_kb; (void)vram_kb;                     /* host / Android: the platform owns both */
 #endif
     plat_log("load[%s] heap %u KB vram free %u KB, %u ms: open %u (%u files) read %u (%u KB, %u KB/s) tex %u (%u, %u KB) sfx %u (%u) "
              "decode %u (%u) music %u obj %u draw %u (%u) other %u; allocs %u / %u KB; skipped %u (%u KB)\n",
