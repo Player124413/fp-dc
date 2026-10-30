@@ -434,9 +434,15 @@ static void apply_settings(void) {
 
 /* the end of a drawn frame: upscale the view, draw the touch pad, present */
 static void frame_end_hook(void) {
+    static int fe_n;
+    if (fe_n < 4) plat_log("frame: end %d", fe_n);
     rgl_present();
+    if (fe_n < 4) plat_log("frame: presented %d", fe_n);
     if (!loading_is_active()) shell_draw_overlay(1.0f / 60.0f);
+    if (fe_n < 4) plat_log("frame: overlay %d", fe_n);
     if (esurf != EGL_NO_SURFACE) eglSwapBuffers(edpy, esurf);
+    if (fe_n < 4) plat_log("frame: swapped %d", fe_n);
+    fe_n++;
     fps_frames++;
     uint64_t now = plat_time_us();
     if (!fps_t0) fps_t0 = now;

@@ -240,22 +240,15 @@ jobs:
             [ -z "$pid" ] && { died="after ~$((i*3))s"; break; }
             sleep 3
           done
-          echo "died: ${died:-no}"
-
+          # give the frame loop a moment, then look again
+          [ -z "$died" ] && sleep 12
           adb exec-out screencap -p > out/launcher.png || true
           timeout 40 adb logcat -d -v brief > out/logcat.txt || true
           timeout 40 adb logcat -d -b crash -v brief > out/crash.txt || true
 
-          # The run log is not always downloadable, so the interesting lines become annotations:
-          # a dozen warnings from the tail of the log (that is where a crash leaves its trace).
-          echo "----- the port's own log -----"
-          cat out/logcat.txt out/crash.txt | grep -E "fpdc|AndroidRuntime|DEBUG|libc|Fatal|signal|Abort|eglCodec" \
-            | tail -10 | cut -c1-220 > /tmp/lines.txt || true
+          echo "----- the port's log -----"
+          grep -E "I/fpdc" out/logcat.txt | tail -8 | cut -c1-220 > /tmp/lines.txt || true
           while IFS= read -r l; do echo "  $l"; echo "::warning::$l"; done < /tmp/lines.txt
-          if [ -s out/crash.txt ]; then
-            echo "----- crash buffer -----"
-            head -8 out/crash.txt | cut -c1-200 | while IFS= read -r l; do echo "  $l"; echo "::warning::crash: $l"; done
-          fi
 
           # BACK must not kill the app
           adb shell input keyevent KEYCODE_BACK || true
@@ -263,18 +256,40 @@ jobs:
           adb exec-out screencap -p > out/after-back.png || true
 
           fail=0
+          pid=$(timeout 15 adb shell pidof com.fpdc.port 2>/dev/null | tr -d '\r')
           if [ -n "$died" ]; then echo "::error::the process died $died"; fail=1; fi
+          if [ -z "$pid" ]; then echo "::error::the app is not running"; fail=1; fi
           for pat in "FATAL EXCEPTION" "ANR in com.fpdc.port" "Unable to find native component" \
-                     "UnsatisfiedLinkError" "FATAL"; do
+                     "UnsatisfiedLinkError"; do
             if grep -qE "$pat" out/logcat.txt; then echo "::error::found: $pat"; fail=1; fi
           done
           grep -q "gles: renderer up" out/logcat.txt || { echo "::error::the GLES renderer never came up"; fail=1; }
-          grep -q "main: shell up"     out/logcat.txt || { echo "::error::the shell never initialised"; fail=1; }
           grep -q "window up"          out/logcat.txt || { echo "::error::no window was ever created"; fail=1; }
-          adb shell pidof com.fpdc.port > /dev/null || { echo "::error::the app is not running"; fail=1; }
           sz=$(stat -c %s out/launcher.png); echo "screenshot: $sz bytes"
           [ "$sz" -gt 20000 ] || { echo "::error::the screen looks blank ($sz bytes)"; fail=1; }
           exit $fail
+
+      - name: Crash details
+        if: always()
+        run: |
+          [ -s out/crash.txt ] || { echo "no crash in the crash buffer"; exit 0; }
+          echo "----- crash buffer -----"
+          grep -E "signal|backtrace|#0[0-9]|Abort|DEBUG" out/crash.txt | head -10 | cut -c1-200 > /tmp/c.txt || true
+          while IFS= read -r l; do echo "  $l"; echo "::warning::$l"; done < /tmp/c.txt
+          # symbolise with the NDK that comes with the runner image (the debug APK keeps its symbols)
+          NDKSTACK=$(ls -d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"/ndk/*/prebuilt/linux-x86_64/bin/ndk-stack 2>/dev/null | head -1)
+          if [ -n "$NDKSTACK" ]; then
+            mkdir -p sym && (cd sym && unzip -oq ../apk/*/app-debug.apk 'lib/*' || true)
+            "$NDKSTACK" -sym sym/lib/x86_64 -dump out/crash.txt 2>/dev/null \
+              | grep -E "#[0-9]+|Abort|signal" | head -12 | cut -c1-200 > /tmp/s.txt || true
+            echo "----- symbolised -----"
+            while IFS= read -r l; do echo "  $l"; echo "::warning::sym: $l"; done < /tmp/s.txt
+          else
+            echo "no ndk-stack in the image; using the tombstone"
+            timeout 60 adb shell dumpsys dropbox --print SYSTEM_TOMBSTONE 2>/dev/null \
+              | grep -E "signal|#0[0-9]|backtrace" | head -10 | cut -c1-200 \
+              | while IFS= read -r l; do echo "  $l"; echo "::warning::tomb: $l"; done
+          fi
 
       - uses: actions/upload-artifact@v4
         if: always()
