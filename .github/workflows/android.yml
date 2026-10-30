@@ -58,7 +58,7 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Build (debug: installable, release: the optimized build)
+      - name: Build the APKs (debug and release)
         run: gradle -p android --no-daemon --stacktrace assembleDebug assembleRelease
 
       - name: Check what went into the APK
