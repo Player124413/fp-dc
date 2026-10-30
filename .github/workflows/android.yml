@@ -2,16 +2,24 @@ name: Android
 
 # Everything that can be checked without a phone: the host-side checks of the port, the APK build with
 # the real NDK, and a smoke test that boots an emulator, installs the APK and launches the launcher.
-# Any failure is echoed as a check-run annotation, so the reason is visible without downloading logs.
+# Failures are echoed as check-run annotations (the log downloads are not always reachable), and every
+# successful build publishes the APKs to a release so they can be downloaded from a stable URL.
 
 on:
   push:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: android-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  NDK: '26.1.10909125'
+  API: '34'
 
 jobs:
   # ------------------------------------------------------------------------------------- host checks
@@ -31,7 +39,7 @@ jobs:
         run: |
           set -o pipefail
           make -C tools/android preview 2>&1 | tee /tmp/preview.log
-          ls -la tools/preview/out/*.png | head -5
+          ls tools/preview/out/*.png | wc -l
 
       - name: Report
         if: failure()
@@ -63,8 +71,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Only first-party actions plus plain shell: the runner image already ships the Android SDK, so
-      # nothing here depends on a third-party action being downloadable.
+      # Only first-party actions plus plain shell: the runner image already ships the Android SDK.
       - name: Android SDK, NDK, CMake
         run: |
           set -o pipefail
@@ -72,15 +79,12 @@ jobs:
           echo "ANDROID_HOME=$SDK" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$SDK" >> $GITHUB_ENV
           SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
-          echo "sdkmanager: $SM"
-          "$SM" --version
           yes | "$SM" --licenses > /dev/null 2>&1 || true
-          "$SM" --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" \
-                 "cmake;3.22.1" "ndk;26.1.10909125" 2>&1 | tail -20
-          echo "--- installed ndk:"; ls "$SDK/ndk" || true
-          echo "--- installed cmake:"; ls "$SDK/cmake" || true
-          NDK="$(ls "$SDK/ndk" 2>/dev/null | head -1)"
-          echo "FP_NDK=$NDK" >> $GITHUB_ENV
+          "$SM" --install "platform-tools" "platforms;android-$API" "build-tools;$API.0.0" \
+                 "cmake;3.22.1" "ndk;$NDK" 2>&1 | tail -20
+          echo "--- ndk:"; ls "$SDK/ndk" || true
+          echo "--- cmake:"; ls "$SDK/cmake" || true
+          echo "FP_NDK=$(ls "$SDK/ndk" | head -1)" >> $GITHUB_ENV
 
       - name: Gradle 8.7
         run: |
@@ -112,7 +116,7 @@ jobs:
         if: failure()
         run: |
           if [ -f /tmp/build.log ]; then
-            grep -E "error:|FAILURE|What went wrong|Caused by|Could not|Execution failed|CMake Error|fatal error|ndk" /tmp/build.log |
+            grep -E "error:|FAILURE|What went wrong|Caused by|Could not|Execution failed|CMake Error|fatal error|undefined reference|multiple definition|duplicate symbol" /tmp/build.log |
               head -40 | cut -c1-300 | while IFS= read -r l; do echo "::error::$l"; done
           fi
 
@@ -130,7 +134,7 @@ jobs:
     name: Smoke test on an emulator
     needs: apk
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -139,7 +143,7 @@ jobs:
           name: fpdc-apk
           path: apk
 
-      - name: Enable KVM (hardware acceleration for the emulator)
+      - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -147,35 +151,67 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           ls -l /dev/kvm
 
+      - name: Emulator and system image
+        run: |
+          set -o pipefail
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$SDK" >> $GITHUB_ENV
+          SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SM" --licenses > /dev/null 2>&1 || true
+          "$SM" --install "platform-tools" "emulator" "system-images;android-33;default;x86_64" 2>&1 | tail -10
+          echo "no" | "$SDK/cmdline-tools/latest/bin/avdmanager" create avd -n fp -k "system-images;android-33;default;x86_64" --force 2>&1 | tail -5
+          "$SDK/cmdline-tools/latest/bin/avdmanager" list avd | head -20
+
+      - name: Boot
+        run: |
+          set -o pipefail
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          nohup "$SDK/emulator/emulator" -avd fp -no-window -no-audio -no-boot-anim -no-snapshot \
+                -gpu swiftshader_indirect -camera-back none -camera-front none -accel auto \
+                > /tmp/emulator.log 2>&1 &
+          adb wait-for-device
+          for i in $(seq 1 90); do
+            b=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+            [ "$b" = "1" ] && { echo "booted after ~$((i*4))s"; break; }
+            sleep 4
+          done
+          adb shell getprop sys.boot_completed | tr -d '\r' | grep -q 1 || {
+            echo "::error::the emulator did not boot"; tail -40 /tmp/emulator.log; exit 1; }
+          adb shell settings put global window_animation_scale 0 || true
+          adb shell settings put global transition_animation_scale 0 || true
+          adb shell wm size
+          adb shell wm density
+
       - name: Install and run
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 33
-          target: default
-          arch: x86_64
-          profile: pixel_5
-          disable-animations: true
-          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
-          script: |
-            mkdir -p out
-            adb install -r apk/app-release.apk || adb install -r apk/app-debug.apk
-            adb logcat -c
-            adb shell am start -W -n com.fpdc.port/.FpActivity
-            sleep 25
-            adb exec-out screencap -p > out/launcher.png
-            adb shell wm size
-            adb logcat -d -v brief > out/logcat.txt
-            echo "----- fpdc -----"
-            grep -E "fpdc|AndroidRuntime" out/logcat.txt | head -60 || true
-            echo "---------------"
-            fail=0
-            for pat in "FATAL EXCEPTION" "ANR in com.fpdc.port" "Unable to find native component" \
-                       "UnsatisfiedLinkError" "E AndroidRuntime"; do
-              if grep -q "$pat" out/logcat.txt; then echo "::error::found: $pat"; fail=1; fi
-            done
-            grep -q "gles: renderer up" out/logcat.txt || { echo "::error::the GLES renderer never came up"; fail=1; }
-            grep -q "shell: data" out/logcat.txt || { echo "::error::the shell never initialised"; fail=1; }
-            exit $fail
+        run: |
+          mkdir -p out
+          adb install -r apk/app-release.apk 2>&1 | tail -3 || adb install -r apk/app-debug.apk
+          adb logcat -c
+          adb shell am start -W -n com.fpdc.port/.FpActivity
+          sleep 25
+          adb shell pidof com.fpdc.port || echo "::error::the process is not running any more"
+          adb exec-out screencap -p > out/launcher.png
+          # a real screen is not a black rectangle: a blank 1080p PNG compresses to a few KB
+          sz=$(stat -c %s out/launcher.png); echo "screenshot: $sz bytes"
+          [ "$sz" -gt 20000 ] || echo "::error::the screen looks blank ($sz bytes)"
+          # BACK goes from HOME to the same screen; the app must survive it
+          adb shell input keyevent KEYCODE_BACK
+          sleep 3
+          adb exec-out screencap -p > out/after-back.png
+          adb logcat -d -v brief > out/logcat.txt
+          echo "----- fpdc -----"
+          grep -E "fpdc|AndroidRuntime" out/logcat.txt | head -60 || true
+          echo "---------------"
+          fail=0
+          for pat in "FATAL EXCEPTION" "ANR in com.fpdc.port" "Unable to find native component" \
+                     "UnsatisfiedLinkError" "E AndroidRuntime" "has died"; do
+            if grep -q "$pat" out/logcat.txt; then echo "::error::found: $pat"; fail=1; fi
+          done
+          grep -q "gles: renderer up" out/logcat.txt || { echo "::error::the GLES renderer never came up"; fail=1; }
+          grep -q "shell: data" out/logcat.txt || { echo "::error::the shell never initialised"; fail=1; }
+          grep -q "AAudio\|snd: " out/logcat.txt || echo "warning: no audio line (expected with -no-audio)"
+          adb shell pidof com.fpdc.port > /dev/null || { echo "::error::the app crashed"; fail=1; }
+          exit $fail
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -184,3 +220,37 @@ jobs:
           path: out/
           if-no-files-found: warn
           retention-days: 14
+
+  # ----------------------------------------------------------------------------------- stable download
+  publish:
+    name: Publish the APK
+    needs: apk
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fpdc-apk
+          path: apk
+
+      - name: Attach to the 'android-build' release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -e
+          ls -la apk
+          TAG=android-build
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1 || \
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --prerelease \
+              --title "Android build" \
+              --notes "Newest APK of the Android port, rebuilt from every push. Install app-release.apk (sideload); the game data is imported in the launcher (see android/README.md)."
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" \
+            apk/app-release.apk apk/app-debug.apk --clobber
+          gh release edit "$TAG" -R "$GITHUB_REPOSITORY" \
+            --notes "Newest APK of the Android port. Built from $SHA on branch $BRANCH.
+
+          Install app-release.apk (sideload). The APK ships no game data: convert your own Assets.dat
+          (python3 tools/builder/fpbuild.py android Assets.dat) and use IMPORT DATA in the launcher."
