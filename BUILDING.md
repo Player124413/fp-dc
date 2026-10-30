@@ -57,6 +57,21 @@ To build without internet access, put these files (names as in `downloads.json`)
 folder of the project, or in a folder named by the environment variable `FPDC_PREBUILT`: they are taken from there
 (after the same SHA-256 check).
 
+## Android data package
+
+The Android port (`android/`) reads the same converted data as the Dreamcast build, but without a disc
+image: the phone imports a zip of the data dir.
+
+```sh
+python3 tools/builder/fpbuild.py android "/path/Freedom Planet/Assets.dat"
+# -> build/builder/fpdc-data.zip   (copy it to the phone: IMPORT DATA in the launcher)
+```
+
+That is the `data` target plus packing -- no mkdcdisc, no KallistiOS, no CDI. If you already built a CDI,
+the data dir is `build/builder/data`; re-zip it with
+`python3 tools/android/make_android_data.py build/builder/data -o fpdc-data.zip`. Building the APK itself
+needs no game data at all (see **[android/README.md](android/README.md)**).
+
 ## Troubleshooting
 
 | Message | What to do |

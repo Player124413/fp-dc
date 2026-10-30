@@ -50,10 +50,12 @@ manifest and is universal since 2013.
 The APK contains no Freedom Planet data. The game reads its assets from
 `<external files dir>/data` (`/sdcard/Android/data/com.fpdc.port/files/data`):
 
-1. Convert your own `Assets.dat` (1.21.5) exactly as for the Dreamcast build
-   (`./build_dreamcast.sh /path/to/Assets.dat`) — that produces `converted/`.
-2. `python3 tools/android/make_android_data.py converted -o fpdc-data.zip`
-3. Copy the zip anywhere on the phone, start the port, **IMPORT DATA**, pick the zip.
+1. One command on a PC converts your own `Assets.dat` (1.21.5) and packs it:
+   `python3 tools/builder/fpbuild.py android "/path/Freedom Planet/Assets.dat"` →
+   `build/builder/fpdc-data.zip` (20-60 min the first time, ~3 GB of disk; it downloads ffmpeg itself).
+   Already have a converted data dir (from a CDI build)? `python3 tools/android/make_android_data.py
+   build/builder/data -o fpdc-data.zip`.
+2. Copy the zip anywhere on the phone, start the port, **IMPORT DATA**, pick the zip.
 
 The importer unpacks into `data.tmp` and swaps the folder in at the end, so an interrupted import cannot
 corrupt a working install; progress is shown in the launcher. A `data` folder copied by other means (file
