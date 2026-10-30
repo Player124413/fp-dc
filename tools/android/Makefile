@@ -30,5 +30,6 @@ shell:
 	@$(MAKE) -C ../preview >/dev/null && echo "  shell: preview harness builds"
 
 preview: shell
+	@mkdir -p ../preview/out
 	@cd ../preview && ./fpdc_preview out all >/dev/null && for f in out/*.ppm; do python3 ppm2png.py $$f $${f%.ppm}.png >/dev/null; done
 	@echo "  shells screens in tools/preview/out/*.png"

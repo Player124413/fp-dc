@@ -1,8 +1,8 @@
 name: Android
 
 # Everything that can be checked without a phone: the host-side checks of the port, the APK build with
-# the real NDK, and a smoke test that boots an emulator, installs the APK, launches the launcher and
-# fails on a crash (the logcat and a screenshot are kept as artifacts).
+# the real NDK, and a smoke test that boots an emulator, installs the APK and launches the launcher.
+# Any failure is echoed as a check-run annotation, so the reason is visible without downloading logs.
 
 on:
   push:
@@ -21,15 +21,33 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
       - name: Android sources, twiddle, font, shell
-        run: make -C tools/android check
+        run: |
+          set -o pipefail
+          make -C tools/android check 2>&1 | tee /tmp/check.log
+
       - name: Render every shell screen
-        run: make -C tools/android preview
+        run: |
+          set -o pipefail
+          make -C tools/android preview 2>&1 | tee /tmp/preview.log
+          ls -la tools/preview/out/*.png | head -5
+
+      - name: Report
+        if: failure()
+        run: |
+          for f in /tmp/check.log /tmp/preview.log; do
+            [ -f "$f" ] || continue
+            grep -E "error|Error|FAILED|No such|cannot|undefined reference" "$f" | head -20 |
+              while IFS= read -r l; do echo "::error::$l"; done
+          done
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: shell-screens
           path: tools/preview/out/*.png
+          if-no-files-found: warn
           retention-days: 14
 
   # ------------------------------------------------------------------------------------------- the APK
@@ -50,25 +68,38 @@ jobs:
 
       - name: NDK, CMake, platform, build tools
         run: |
+          set -o pipefail
+          { yes | sdkmanager --licenses > /dev/null 2>&1 || true; } 
           sdkmanager --install "platforms;android-34" "build-tools;34.0.0" \
-            "ndk;26.1.10909125" "cmake;3.22.1" > /dev/null
-          echo "ndk: $(ls "$ANDROID_HOME/ndk")"
+            "ndk;26.1.10909125" "cmake;3.22.1" 2>&1 | tee /tmp/sdk.log | tail -5
+          echo "ndk: $(ls "$ANDROID_HOME/ndk" 2>&1)"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
+          build-root-directory: android
           gradle-version: '8.7'
 
       - name: Build the APKs (debug and release)
-        run: gradle -p android --no-daemon --stacktrace assembleDebug assembleRelease
+        run: |
+          set -o pipefail
+          gradle -p android --no-daemon --warning-mode all assembleDebug assembleRelease 2>&1 | tee /tmp/build.log
 
       - name: Check what went into the APK
         run: |
           set -e
           for apk in android/app/build/outputs/apk/debug/app-debug.apk android/app/build/outputs/apk/release/app-release.apk; do
             echo "== $apk ($(du -h "$apk" | cut -f1))"
-            unzip -l "$apk" | grep -E 'lib/.*/(libfpdc\.so|libandroid\.so)' || { echo "the native library is missing"; exit 1; }
-            unzip -l "$apk" | grep -q 'classes.dex' || { echo "no dex (the Java part is missing)"; exit 1; }
-            unzip -p "$apk" AndroidManifest.xml | head -c 8 | od -c | head -1
+            unzip -l "$apk" | grep -E 'lib/.*/libfpdc\.so' || { echo "::error::the native library is missing from $apk"; exit 1; }
+            unzip -l "$apk" | grep -q 'classes.dex' || { echo "::error::no classes.dex in $apk"; exit 1; }
+          done
+
+      - name: Report
+        if: failure()
+        run: |
+          for f in /tmp/sdk.log /tmp/build.log; do
+            [ -f "$f" ] || continue
+            grep -E "error:|FAILURE|What went wrong|Caused by|Could not|Execution failed|not found|CMake Error|fatal error" "$f" |
+              head -40 | cut -c1-300 | while IFS= read -r l; do echo "::error::$l"; done
           done
 
       - uses: actions/upload-artifact@v4
@@ -78,15 +109,6 @@ jobs:
             android/app/build/outputs/apk/debug/app-debug.apk
             android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
-
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: apk-build-logs
-          path: |
-            android/app/build/**/*.log
-            android/.gradle/**/*.log
-          retention-days: 7
 
   # ------------------------------------------------------------------------------------- emulator run
   smoke:
@@ -108,6 +130,7 @@ jobs:
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
 
       - name: Install and run
         uses: reactivecircus/android-emulator-runner@v2
@@ -119,25 +142,24 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -camera-back none
           script: |
+            mkdir -p out
             adb install -r apk/app-release.apk || adb install -r apk/app-debug.apk
             adb logcat -c
             adb shell am start -W -n com.fpdc.port/.FpActivity
             sleep 25
-            mkdir -p out
             adb exec-out screencap -p > out/launcher.png
-            # the launcher's buttons: CONTROLS, then BACK
             adb shell wm size
             adb logcat -d -v brief > out/logcat.txt
             echo "----- fpdc -----"
-            grep -E "fpdc|AndroidRuntime|libc " out/logcat.txt | head -80 || true
+            grep -E "fpdc|AndroidRuntime" out/logcat.txt | head -60 || true
             echo "---------------"
             fail=0
             for pat in "FATAL EXCEPTION" "ANR in com.fpdc.port" "Unable to find native component" \
                        "UnsatisfiedLinkError" "E AndroidRuntime"; do
-              if grep -q "$pat" out/logcat.txt; then echo "FOUND PROBLEM: $pat"; fail=1; fi
+              if grep -q "$pat" out/logcat.txt; then echo "::error::found: $pat"; fail=1; fi
             done
-            if ! grep -q "gles: renderer up" out/logcat.txt; then echo "the GLES renderer never came up"; fail=1; fi
-            if ! grep -q "shell: data" out/logcat.txt; then echo "the shell never initialised"; fail=1; fi
+            grep -q "gles: renderer up" out/logcat.txt || { echo "::error::the GLES renderer never came up"; fail=1; }
+            grep -q "shell: data" out/logcat.txt || { echo "::error::the shell never initialised"; fail=1; }
             exit $fail
 
       - uses: actions/upload-artifact@v4
@@ -145,4 +167,5 @@ jobs:
         with:
           name: emulator-run
           path: out/
+          if-no-files-found: warn
           retention-days: 14
