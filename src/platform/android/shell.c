@@ -36,7 +36,7 @@ void shell_init(void) {
     int n = shell_file_read(SETTINGS_FILE, s_buf, (int)sizeof s_buf);
     if (n > 0) cfg_parse(s_buf, n);
     touch_load(touch_layout());        /* defaults + whatever port.txt says */
-    shell_log("shell: %d settings loaded", cfg_count());
+    shell_log("shell: %d settings loaded, screen %d", cfg_count(), s_screen);
 }
 
 void shell_reset(void) {
@@ -73,6 +73,7 @@ int shell_active(void) { return !s_in_game; }
 
 int shell_open(int screen) {
     if (screen < 0 || screen >= SCREEN_N) return 0;
+    if (screen != s_screen) shell_log("screen %d", screen);   /* the smoke test watches this */
     s_screen = screen;
     s_editor = screen == SCREEN_CONTROLS;
     if (s_editor) editor_open(s_in_game);

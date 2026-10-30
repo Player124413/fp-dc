@@ -222,7 +222,7 @@ jobs:
       - name: Install and run
         run: |
           mkdir -p out
-          apk=$(find apk -name 'app-debug.apk' | head -1)
+          apk=$(find apk -name 'app-release.apk' | head -1)
           [ -n "$apk" ] || apk=$(find apk -name '*.apk' | head -1)
           echo "installing $apk"
           adb install -r "$apk" > /tmp/install.log 2>&1 || {
@@ -309,6 +309,94 @@ jobs:
           head -1 /tmp/art.txt
           msg=$(sed -e '1d' /tmp/art.txt | sed -e 's/$/%0A/' | tr -d '\n')
           echo "::warning::$msg"
+
+      - name: Tap through the shell
+        run: |
+          mkdir -p out
+          apk=$(find apk -name 'app-debug.apk' | head -1)
+          [ -n "$apk" ] || { echo "no debug apk, skipping the tap test"; exit 0; }
+          adb install -r "$apk" > /tmp/install2.log 2>&1 || {
+            echo "::error::install failed: $(tail -2 /tmp/install2.log | tr '\n' ' ')"; exit 1; }
+          adb logcat -c || true
+          adb logcat -b crash -c || true
+          adb shell am force-stop com.fpdc.port || true
+          adb shell am start -W -n com.fpdc.port/.FpActivity > /dev/null 2>&1 || true
+          for i in $(seq 1 30); do
+            adb logcat -d 2>/dev/null | grep -q "window up" && break
+            sleep 2
+          done
+          geo=$(adb logcat -d | grep -o "window up: [0-9]*x[0-9]* [0-9.]*x" | tail -1)
+          echo "geometry: $geo"
+          [ -n "$geo" ] || { echo "::error::the port never reported a window"; exit 1; }
+          set -- $geo                       # window up: 640x320 1.00x
+          WINW=$(echo "$3" | cut -dx -f1)
+          WINH=$(echo "$3" | cut -dx -f2)
+          SCALE=${4%x}
+          echo "window $WINW x $WINH, density scale $SCALE"
+
+          fail=0
+          mark=0
+          btn() {    # $1 = index of the home button (0 play/import, 1 controls, 2 settings, 3 about)
+            python3 -c "
+          import sys
+          w, h, s, i = float('$WINW'), float('$WINH'), float('$SCALE'), int('$1')
+          dpw, dph = w / s, h / s
+          bw, bh, gap, margin = 250.0, 44.0, 11.0, 26.0
+          total = 4 * bh + 3 * gap
+          x = dpw - margin - bw
+          y = (dph - total) / 2 + i * (bh + gap)
+          print(int((x + bw / 2) * s), int((y + bh / 2) * s))
+          "
+          }
+          expect() {  # $1 = the screen that must open, $2 = what it is
+            for i in $(seq 1 10); do
+              adb logcat -d 2>/dev/null | tail -n +$((mark + 1)) | grep -q "screen $1" && {
+                echo "  ok: $2 (screen $1)"; return 0; }
+              sleep 1
+            done
+            echo "::error::$2 did not open (no 'screen $1' in the log)"
+            adb logcat -d 2>/dev/null | tail -n +$((mark + 1)) | grep -E "I/fpdc" | tail -5 \
+              | while IFS= read -r l; do echo "::error::log: $l"; done
+            fail=1
+            return 1
+          }
+          wait_frames() { sleep 2; }
+
+          mark=$(adb logcat -d | wc -l)
+          read -r X Y <<< "$(btn 1)"
+          echo "tapping CONTROLS at $X,$Y"
+          adb shell input tap "$X" "$Y"
+          expect 2 "the controls editor"; wait_frames
+          adb exec-out screencap -p > out/controls.png || true
+          adb exec-out screencap > /tmp/controls.raw || true
+          # drag on the pad: the editor must survive a gesture
+          adb shell input swipe $((X - 400)) $((Y + 60)) $((X - 200)) $((Y + 120)) 300 || true
+          sleep 1
+          mark=$(adb logcat -d | wc -l)
+          adb shell input keyevent KEYCODE_BACK; sleep 2
+          expect 0 "the home screen after BACK"
+
+          for pair in "2:1:settings screen" "3:3:about screen" "0:4:the data screen"; do
+            idx=${pair%%:*}; rest=${pair#*:}; scr=${rest%%:*}; name=${rest#*:}
+            mark=$(adb logcat -d | wc -l)
+            read -r X Y <<< "$(btn "$idx")"
+            echo "tapping $name at $X,$Y"
+            adb shell input tap "$X" "$Y"
+            expect "$scr" "$name"; wait_frames
+            adb exec-out screencap -p > "out/screen-$scr.png" || true
+            mark=$(adb logcat -d | wc -l)
+            adb shell input keyevent KEYCODE_BACK; sleep 2
+            expect 0 "the home screen after BACK"
+          done
+
+          timeout 30 adb logcat -d -b crash > /tmp/crash2.txt || true
+          [ -s /tmp/crash2.txt ] && { echo "::error::the crash buffer is not empty"; fail=1; }
+          adb logcat -d | grep -E "FATAL EXCEPTION|ANR in com.fpdc.port" && { echo "::error::a Java crash"; fail=1; }
+          adb logcat -d -v brief > out/logcat-taps.txt || true
+          echo "----- the port's log (taps) -----"
+          grep -E "I/fpdc" out/logcat-taps.txt | tail -8 | cut -c1-220 > /tmp/l2.txt || true
+          while IFS= read -r l; do echo "  $l"; echo "::warning::$l"; done < /tmp/l2.txt
+          exit $fail
 
       - name: Crash details
         if: always()
