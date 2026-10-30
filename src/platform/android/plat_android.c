@@ -45,8 +45,7 @@
 int demo_letterbox = -1;
 int demo_char = -1;
 
-/* fp.h profiler, unused on Android but referenced by PROF() */
-uint32_t prof_acc[PS_N], prof_max[PS_N];
+/* prof_acc / prof_max (the frame profiler) and save_card_total() belong to the game (game.c, save.c) */
 
 /* ------------------------------------------------------------------ state */
 static struct android_app *APP;
@@ -583,8 +582,6 @@ static void engine_stop(void) {
     engine_ready = 0;
     shell_set_in_game(0);
 }
-
-int save_card_total(void) { return 1; }
 
 void plat_init(void) {}
 
