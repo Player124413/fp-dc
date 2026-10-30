@@ -222,6 +222,233 @@ jobs:
       - name: Install and run
         run: |
           mkdir -p out
+          apk=$(find apk -name 'app-debug.apk' | head -1)
+          [ -n "$apk" ] || apk=$(find apk -name '*.apk' | head -1)
+          echo "installing $apk"
+          adb install -r "$apk" > /tmp/install.log 2>&1 || {
+            echo "::error::install failed: $(tail -2 /tmp/install.log | tr '\n' ' ')"; exit 1; }
+          adb logcat -c || true
+          adb logcat -b crash -c || true
+          adb shell am start -W -n com.fpdc.port/.FpActivity > /tmp/start.log 2>&1 || \
+            echo "::error::am start: $(tail -2 /tmp/start.log | tr '\n' ' ')"
+
+          # wait for the renderer, but stop as soon as the process disappears
+          died=""
+          for i in $(seq 1 25); do
+            adb logcat -d 2>/dev/null | grep -q "gles: renderer up" && break
+            pid=$(timeout 15 adb shell pidof com.fpdc.port 2>/dev/null | tr -d '\r')
+            [ -z "$pid" ] && { died="after ~$((i*3))s"; break; }
+            sleep 3
+          done
+          echo "died: ${died:-no}"
+
+          adb exec-out screencap -p > out/launcher.png || true
+          timeout 40 adb logcat -d -v brief > out/logcat.txt || true
+          timeout 40 adb logcat -d -b crash -v brief > out/crash.txt || true
+
+          # The run log is not always downloadable, so the interesting lines become annotations:
+          # ten warnings from the tail of the log (that is where a crash leaves its trace).
+          echo "----- the port's own log -----"
+          grep -E "^[A-Z]/fpdc|fpdc *:|AndroidRuntime|F DEBUG|libc *:|eglCodec|OpenGLRenderer|Choreographer" out/logcat.txt \
+            | tail -12 | cut -c1-200 > /tmp/lines.txt || true
+          while IFS= read -r l; do echo "  $l"; echo "::warning::$l"; done < /tmp/lines.txt
+          if [ -s out/crash.txt ]; then
+            echo "----- crash buffer -----"
+            tail -6 out/crash.txt | cut -c1-200 > /tmp/crashlines.txt
+            while IFS= read -r l; do echo "  $l"; done < /tmp/crashlines.txt
+          fi
+
+          # BACK must not kill the app
+          adb shell input keyevent KEYCODE_BACK || true
+          sleep 4
+          adb exec-out screencap -p > out/after-back.png || true
+
+          fail=0
+          if [ -n "$died" ]; then echo "::error::the process died $died"; fail=1; fi
+          for pat in "FATAL EXCEPTION" "ANR in com.fpdc.port" "Unable to find native component" \
+                     "UnsatisfiedLinkError" "E FATAL|FATAL"; do
+            if grep -qE "$pat" out/logcat.txt; then echo "::error::found: $pat"; fail=1; fi
+          done
+          grep -q "gles: renderer up" out/logcat.txt || { echo "::error::the GLES renderer never came up"; fail=1; }
+          grep -q "main: shell up"     out/logcat.txt || { echo "::error::the shell never initialised"; fail=1; }
+          grep -q "window up"          out/logcat.txt || { echo "::error::no window was ever created"; fail=1; }
+          adb shell pidof com.fpdc.port > /dev/null || { echo "::error::the app is not running"; fail=1; }
+          sz=$(stat -c %s out/launcher.png); echo "screenshot: $sz bytes"
+          [ "$sz" -gt 20000 ] || { echo "::error::the screen looks blank ($sz bytes)"; fail=1; }
+          exit $fail
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shell-screens
+          path: tools/preview/out/*.png
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ------------------------------------------------------------------------------------------- the APK
+  apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Only first-party actions plus plain shell: the runner image already ships the Android SDK.
+      - name: Android SDK, NDK, CMake
+        run: |
+          set -o pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$SDK" >> $GITHUB_ENV
+          SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SM" --licenses > /dev/null 2>&1 || true
+          "$SM" --install "platform-tools" "platforms;android-$API" "build-tools;$API.0.0" \
+                 "cmake;3.22.1" "ndk;$NDK" 2>&1 | tail -20
+          echo "--- ndk:"; ls "$SDK/ndk" || true
+          echo "--- cmake:"; ls "$SDK/cmake" || true
+          echo "FP_NDK=$(ls "$SDK/ndk" | head -1)" >> $GITHUB_ENV
+
+      - name: Gradle 8.7
+        run: |
+          set -o pipefail
+          curl -sSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q /tmp/gradle.zip -d "$HOME"
+          echo "$HOME/gradle-8.7/bin" >> $GITHUB_PATH
+          "$HOME/gradle-8.7/bin/gradle" --version | head -6
+
+      - name: Build the APKs (debug and release)
+        env:
+          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx3g
+        run: |
+          set -o pipefail
+          gradle --no-daemon --warning-mode all -p android \
+                 ${FP_NDK:+-PfpNdk=$FP_NDK} assembleDebug assembleRelease 2>&1 | tee /tmp/build.log
+
+      - name: Check what went into the APK
+        run: |
+          set -e
+          for apk in android/app/build/outputs/apk/debug/app-debug.apk android/app/build/outputs/apk/release/app-release.apk; do
+            echo "== $apk ($(du -h "$apk" | cut -f1))"
+            unzip -l "$apk" | grep -E 'lib/.*/libfpdc\.so' || { echo "::error::the native library is missing from $apk"; exit 1; }
+            unzip -l "$apk" | grep -q 'classes.dex' || { echo "::error::no classes.dex in $apk"; exit 1; }
+          done
+          ls -la android/app/build/outputs/apk/*/*.apk
+
+      - name: Report
+        if: failure()
+        run: |
+          if [ -f /tmp/build.log ]; then
+            grep -E "error:|FAILURE|What went wrong|Caused by|Could not|Execution failed|CMake Error|fatal error|undefined reference|multiple definition|duplicate symbol" /tmp/build.log |
+              head -40 | cut -c1-300 | while IFS= read -r l; do echo "::error::$l"; done
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fpdc-apk
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  # ------------------------------------------------------------------------------------- emulator run
+  smoke:
+    name: Smoke test on an emulator
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: fpdc-apk
+          path: apk
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - name: Emulator and system image
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$SDK" >> $GITHUB_ENV
+          echo "$SDK/platform-tools" >> $GITHUB_PATH
+          echo "$SDK/emulator" >> $GITHUB_PATH
+          echo "$SDK/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          # pin where the AVD lives, or avdmanager and the emulator disagree (they then look in
+          # $ANDROID_AVD_HOME, $ANDROID_SDK_HOME/avd and $HOME/.android/avd)
+          export ANDROID_USER_HOME="$HOME/.android"
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_USER_HOME=$ANDROID_USER_HOME" >> $GITHUB_ENV
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> $GITHUB_ENV
+          echo "java: $(command -v java || echo MISSING)"
+          ls "$SDK" || true
+          SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SM" ] || { echo "::error::no sdkmanager at $SM"; exit 1; }
+          yes | "$SM" --licenses > /dev/null 2>&1 || true
+          if ! "$SM" --install "platform-tools" "emulator" "system-images;android-33;default;x86_64" > /tmp/sdk.log 2>&1; then
+            echo "::error::sdkmanager install failed: $(tail -3 /tmp/sdk.log | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "installed: $(grep -c . /tmp/sdk.log) lines of output"
+          AVDM="$SDK/cmdline-tools/latest/bin/avdmanager"
+          [ -x "$AVDM" ] || { echo "::error::no avdmanager at $AVDM"; exit 1; }
+          if ! echo no | "$AVDM" create avd -n fp -k "system-images;android-33;default;x86_64" --force > /tmp/avd.log 2>&1; then
+            echo "::error::avdmanager failed: $(tail -3 /tmp/avd.log | tr '\n' ' ')"
+            exit 1
+          fi
+          "$AVDM" list avd | head -10
+          ls -la "$ANDROID_AVD_HOME" || true
+          [ -f "$ANDROID_AVD_HOME/fp.ini" ] || { echo "::error::avdmanager did not write $ANDROID_AVD_HOME/fp.ini"; exit 1; }
+
+      - name: Boot
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export PATH="$SDK/platform-tools:$SDK/emulator:$PATH"
+          command -v adb || { echo "::error::adb not found"; exit 1; }
+          "$SDK/emulator/emulator" -list-avds 2>&1 | head -5
+          nohup "$SDK/emulator/emulator" -avd fp -no-window -no-audio -no-boot-anim -no-snapshot \
+                -gpu swiftshader_indirect -camera-back none -camera-front none -accel auto \
+                > /tmp/emulator.log 2>&1 &
+          EMU=$!
+          dump() {
+            echo "::error::$1"
+            tail -8 /tmp/emulator.log | cut -c1-250 | while IFS= read -r l; do echo "::error::emu: $l"; done
+            exit 1
+          }
+          sleep 10
+          kill -0 $EMU 2>/dev/null || dump "the emulator process died right away"
+          timeout 120 adb wait-for-device || dump "no device appeared (adb wait-for-device timed out)"
+          ok=0
+          for i in $(seq 1 60); do
+            b=$(timeout 10 adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+            if [ "$b" = "1" ]; then echo "booted after ~$((i*4))s"; ok=1; break; fi
+            kill -0 $EMU 2>/dev/null || dump "the emulator died while booting"
+            sleep 4
+          done
+          [ "$ok" = "1" ] || dump "sys.boot_completed never became 1"
+          timeout 20 adb shell wm size || true
+          timeout 20 adb shell wm density || true
+
+      - name: Install and run
+        run: |
+          mkdir -p out
           adb install -r apk/app-release.apk 2>&1 | tail -3 || adb install -r apk/app-debug.apk
           adb logcat -c
           adb shell am start -W -n com.fpdc.port/.FpActivity

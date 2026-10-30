@@ -646,6 +646,7 @@ static void on_cmd(struct android_app *app, int32_t cmd) {
 
 /* ------------------------------------------------------------------ the frame loop */
 void android_main(struct android_app *app) {
+    plat_log("main: enter");
     APP = app;
     app->onAppCmd = on_cmd;
     app->onInputEvent = on_input;
@@ -655,10 +656,13 @@ void android_main(struct android_app *app) {
         jvm = app->activity->vm;
         (*jvm)->AttachCurrentThread(jvm, &jenv, NULL);
     }
+    plat_log("main: jni %s", jenv ? "ok" : "missing");
     paths_init();
-    data_probe();
+    plat_log("main: data %d (%ld bytes)", data_probe(), data_bytes);
     plat_init();
+    plat_log("main: plat up");
     shell_init();
+    plat_log("main: shell up");
     rgl_frame_end_hook = frame_end_hook;
     plat_log("shell: data %s (%ld bytes), audio %d Hz", data_ok ? "ok" : "missing", data_bytes, snd_out_rate());
 
