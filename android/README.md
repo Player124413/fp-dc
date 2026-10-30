@@ -102,9 +102,25 @@ music), so the package is the Dreamcast `converted/` tree, unpacked.
 | `audio.music` / `audio.sfx` | 80 / 90 | master volumes (the game's own options still apply) |
 | `pad.*` | | the touch layout written by the editor |
 
+## Prebuilt APK (CI)
+
+Every push builds the port with the real NDK and runs it on an Android emulator —
+[`.github/workflows/android.yml`](../.github/workflows/android.yml). The APKs are attached to the
+[`android-build` release](https://github.com/Player124413/fp-dc/releases/tag/android-build):
+install `app-release.apk` (it is signed with the debug key, so `adb install -r` works on any phone).
+
+The workflow has four jobs:
+
+| job | what it does |
+| --- | --- |
+| `checks` | the host checks below, plus every launcher screen rendered to PNG |
+| `apk` | `sdkmanager` installs the SDK/NDK/CMake, Gradle 8.7 builds `assembleDebug assembleRelease`, then the APKs are inspected (`lib/*/libfpdc.so`, `classes.dex` present) |
+| `smoke` | boots an API 33 x86_64 emulator with KVM, installs the release APK, launches `com.fpdc.port/.FpActivity`, requires the GLES renderer and a window, then taps through the shell with the debug APK: `CONTROLS` (and drags on the pad), `SETTINGS`, `ABOUT`, the data screen, `BACK` after each — every screen change is checked in logcat, and the run fails on a crash, an ANR, a blank screen or a process that dies |
+| `publish` | copies both APKs to the release |
+
 ## Verified / not verified
 
-Everything below runs on a plain Linux host without the NDK or a device:
+Runs on a plain Linux host without the NDK or a device:
 
 ```sh
 make -C tools/android check      # syntax + twiddle + font + preview build
@@ -115,10 +131,14 @@ make -C tools/android preview    # every launcher/editor/in-game screen as PNG
 `tools/android/ndkstub/`, verifies `fp_untwiddle_offset()` against `tools/twiddle_disc.py` for 15 atlas shapes,
 checks the generated 5×7 font, and builds the shell against the host UI backend.
 
-**Not verified here:** an actual NDK build and anything that needs a device (EGL surface lifecycle, AAudio
-latency on a given phone, real touch feel, thermals). Those need `./gradlew` and a phone. `plat_android.c`
-logs to logcat under the tag `fpdc` (and `fpdc/ui` for the shell) — `adb logcat -s fpdc fpdc/ui` is the first
-thing to look at if something misbehaves.
+Verified by CI on an emulator: the NDK build of all three ABIs, the EGL surface lifecycle (created, torn
+down, created again after `BACK`), the launcher, the controls editor, the settings and the about screen
+rendering through the GLES backend, touch input, the BACK handling, and that nothing crashes in between.
+
+**Not verified:** AAudio latency on a given phone (`-no-audio` in CI, so the mixer is never pulled), real
+touch feel, thermals, and the game itself on a device — the CI emulator has no game data, so the shell is
+what runs there. `plat_android.c` logs to logcat under the tag `fpdc` (and `fpdc/ui` for the shell) —
+`adb logcat -s fpdc fpdc/ui` is the first thing to look at if something misbehaves.
 
 ## Why ETC2 is optional
 

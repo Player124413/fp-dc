@@ -429,31 +429,25 @@ static int gfx_init(void) {
 
 /* settings -> renderer/audio, read every frame (cheap, idempotent) */
 static void apply_settings(void) {
+    static int applied_mode = -1;
     int mode = shell_get_int("render.mode", RGL_PIXEL);
     int filt = shell_get_int("render.filter", 1);
     int lb = shell_get_int("video.letterbox", 1);
     int scan = shell_get_int("render.scanlines", 0);
-    plat_log("apply: mode %d", mode);
+    if (mode != applied_mode) { applied_mode = mode; plat_log("render mode %d, filter %d, letterbox %d, scanlines %d", mode, filt, lb, scan); }
     rgl_set_mode(mode, filt, lb, scan);   /* the port's letterbox is the upscale's; the game's own
                                            * widescreen option (r_set_letterbox) stays the game's */
-    plat_log("apply: audio");
     snd_master(shell_get_int("audio.music", 80), shell_get_int("audio.sfx", 90));
-    plat_log("apply: keepon");
     keep_screen_on(shell_get_int("sys.keepon", 1));
-    plat_log("apply: done");
 }
 
 /* the end of a drawn frame: upscale the view, draw the touch pad, present */
 static void frame_end_hook(void) {
-    static int fe_n;
-    if (fe_n < 4) plat_log("frame: end %d", fe_n);
+    static int first = 1;
+    if (first) { first = 0; plat_log("first frame drawn"); }
     rgl_present();
-    if (fe_n < 4) plat_log("frame: presented %d", fe_n);
     if (!loading_is_active()) shell_draw_overlay(1.0f / 60.0f);
-    if (fe_n < 4) plat_log("frame: overlay %d", fe_n);
     if (esurf != EGL_NO_SURFACE) eglSwapBuffers(edpy, esurf);
-    if (fe_n < 4) plat_log("frame: swapped %d", fe_n);
-    fe_n++;
     fps_frames++;
     uint64_t now = plat_time_us();
     if (!fps_t0) fps_t0 = now;
