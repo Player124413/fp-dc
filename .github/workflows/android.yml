@@ -232,17 +232,18 @@ jobs:
           adb shell am start -W -n com.fpdc.port/.FpActivity > /tmp/start.log 2>&1 || \
             echo "::error::am start: $(tail -2 /tmp/start.log | tr '\n' ' ')"
 
-          # wait for the renderer, but stop as soon as the process disappears
+          gone() { [ -z "$(timeout 15 adb shell pidof com.fpdc.port 2>/dev/null | tr -d '\r')" ]; }
+          # wait for the renderer and the window, stopping as soon as the process disappears
           died=""
-          for i in $(seq 1 25); do
-            adb logcat -d 2>/dev/null | grep -q "gles: renderer up" && break
-            pid=$(timeout 15 adb shell pidof com.fpdc.port 2>/dev/null | tr -d '\r')
-            [ -z "$pid" ] && { died="after ~$((i*3))s"; break; }
+          for i in $(seq 1 30); do
+            adb logcat -d 2>/dev/null | grep -q "window up" && break
+            gone && { died="after ~$((i*3))s"; break; }
             sleep 3
           done
-          # give the frame loop a moment, then look again
-          [ -z "$died" ] && sleep 12
+          echo "died: ${died:-no}"
+          sleep 3
           adb exec-out screencap -p > out/launcher.png || true
+          adb exec-out screencap > /tmp/screen.raw || true
           timeout 40 adb logcat -d -v brief > out/logcat.txt || true
           timeout 40 adb logcat -d -b crash -v brief > out/crash.txt || true
 
@@ -250,24 +251,64 @@ jobs:
           grep -E "I/fpdc" out/logcat.txt | tail -8 | cut -c1-220 > /tmp/lines.txt || true
           while IFS= read -r l; do echo "  $l"; echo "::warning::$l"; done < /tmp/lines.txt
 
-          # BACK must not kill the app
-          adb shell input keyevent KEYCODE_BACK || true
-          sleep 4
-          adb exec-out screencap -p > out/after-back.png || true
-
           fail=0
-          pid=$(timeout 15 adb shell pidof com.fpdc.port 2>/dev/null | tr -d '\r')
-          if [ -n "$died" ]; then echo "::error::the process died $died"; fail=1; fi
-          if [ -z "$pid" ]; then echo "::error::the app is not running"; fail=1; fi
+          [ -n "$died" ] && { echo "::error::the process died $died"; fail=1; }
           for pat in "FATAL EXCEPTION" "ANR in com.fpdc.port" "Unable to find native component" \
                      "UnsatisfiedLinkError"; do
-            if grep -qE "$pat" out/logcat.txt; then echo "::error::found: $pat"; fail=1; fi
+            grep -qE "$pat" out/logcat.txt && { echo "::error::found: $pat"; fail=1; }
           done
+          [ -s out/crash.txt ] && { echo "::error::the crash buffer is not empty"; fail=1; }
           grep -q "gles: renderer up" out/logcat.txt || { echo "::error::the GLES renderer never came up"; fail=1; }
           grep -q "window up"          out/logcat.txt || { echo "::error::no window was ever created"; fail=1; }
           sz=$(stat -c %s out/launcher.png); echo "screenshot: $sz bytes"
           [ "$sz" -gt 20000 ] || { echo "::error::the screen looks blank ($sz bytes)"; fail=1; }
+
+          # BACK on the home screen quits the port; anything else must not take the app down
+          alive_before=$(timeout 15 adb shell pidof com.fpdc.port 2>/dev/null | tr -d '\r')
+          adb shell input keyevent KEYCODE_BACK || true
+          sleep 4
+          adb exec-out screencap -p > out/after-back.png || true
+          alive_after=$(timeout 15 adb shell pidof com.fpdc.port 2>/dev/null | tr -d '\r')
+          if [ -n "$alive_before" ] && [ -z "$alive_after" ]; then
+            # the port leaves with finishApp() and logs 'exiting' first: that is a clean quit
+            grep -q "exiting" out/logcat.txt || { echo "::error::BACK killed the app without a clean quit"; fail=1; }
+            adb logcat -d -b crash | grep -q "Fatal signal" && { echo "::error::BACK crashed the app"; fail=1; }
+          fi
+          [ -s out/crash.txt ] && { echo "::error::the app crashed"; fail=1; }
           exit $fail
+
+      - name: Look at the screen
+        if: always()
+        run: |
+          [ -s /tmp/screen.raw ] || { echo "no raw screencap"; exit 0; }
+          python3 - <<'EOF' > /tmp/art.txt || true
+          import struct
+          d = open('/tmp/screen.raw', 'rb').read()
+          w = h = 0; off = 0
+          for n in (4, 3):
+              hdr = n * 4
+              if len(d) < hdr: continue
+              v = struct.unpack('<%dI' % n, d[:hdr])
+              if 0 < v[0] < 5000 and 0 < v[1] < 5000 and len(d) == hdr + v[0] * v[1] * 4:
+                  w, h, off = v[0], v[1], hdr
+                  break
+          if not w:
+              print('cannot parse the screencap: %d bytes' % len(d)); raise SystemExit
+          cols, rows, lut = 78, 22, ' .:-=+*#%@'
+          print('%dx%d' % (w, h))
+          for r in range(rows):
+              line = ''
+              for c in range(cols):
+                  x = int((c + 0.5) * w / cols); y = int((r + 0.5) * h / rows)
+                  i = off + (y * w + x) * 4
+                  b, g, rr = d[i], d[i + 1], d[i + 2]
+                  lum = (rr * 30 + g * 59 + b * 11) // 100
+                  line += lut[min(9, lum * 10 // 256)]
+              print(line)
+          EOF
+          head -1 /tmp/art.txt
+          msg=$(sed -e '1d' /tmp/art.txt | sed -e 's/$/%0A/' | tr -d '\n')
+          echo "::warning::$msg"
 
       - name: Crash details
         if: always()
