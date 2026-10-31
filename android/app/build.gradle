@@ -2,6 +2,11 @@ plugins {
     id 'com.android.application'
 }
 
+// An update must never look like a downgrade: the CI run number when there is one, else
+// -PfpVersionCode=..., else 1 for a local build. (A plain `versionCode a ?: b` does not parse: Groovy
+// reads it as a method call.)
+def fpVersionCode = ((project.findProperty('fpVersionCode') ?: System.getenv('GITHUB_RUN_NUMBER') ?: '1')).toString().toInteger()
+
 android {
     namespace 'com.fpdc.port'
     compileSdk 34
@@ -26,9 +31,7 @@ android {
         applicationId 'com.fpdc.port'
         minSdk 26                       // AAudio (the low-latency output) starts at API 26
         targetSdk 34
-        // an update must never look like a downgrade: the CI run number when there is one, else
-        // -PfpVersionCode=..., else 1 for a local build
-        versionCode (project.findProperty('fpVersionCode') ?: System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+        versionCode fpVersionCode
         versionName '1.1'
         ndk {
             // 64-bit first (every phone since 2019); armeabi-v7a for older ones; x86_64 for emulators
