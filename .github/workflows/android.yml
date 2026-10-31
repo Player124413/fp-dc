@@ -100,23 +100,38 @@ jobs:
 
       - name: Check what went into the APK
         run: |
-          set -e
+          set -o pipefail
           SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          BT=$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)
-          for apk in android/app/build/outputs/apk/debug/app-debug.apk android/app/build/outputs/apk/release/app-release.apk; do
+          BT=$(ls -d "$SDK"/build-tools/* 2>/dev/null | sort -V | tail -1)
+          echo "build-tools: ${BT:-MISSING}"
+          fail=0
+          for apk in android/app/build/outputs/apk/debug/app-debug.apk \
+                     android/app/build/outputs/apk/release/app-release.apk; do
+            [ -f "$apk" ] || { echo "::error::$apk was not built"; fail=1; continue; }
             echo "== $apk ($(du -h "$apk" | cut -f1))"
-            unzip -l "$apk" | grep -E 'lib/.*/libfpdc\.so' || { echo "::error::the native library is missing from $apk"; exit 1; }
-            unzip -l "$apk" | grep -q 'classes.dex' || { echo "::error::no classes.dex in $apk"; exit 1; }
+            unzip -l "$apk" | grep -E 'lib/.*/libfpdc\.so' || { echo "::error::the native library is missing from $apk"; fail=1; }
+            unzip -l "$apk" | grep -q 'classes.dex' || { echo "::error::no classes.dex in $apk"; fail=1; }
             # an update installs over the previous version only when the signature matches, so every
             # build must carry the same certificate -- the one in android/keystore
-            "$BT/apksigner" verify --print-certs "$apk" | grep -E "Signer #1 certificate SHA-256|Verifies"
-            "$BT/aapt2" dump badging "$apk" | grep -E "^package:|native-code" || true
+            if ! out=$("$BT/apksigner" verify --print-certs "$apk" 2>&1); then
+              echo "::error::apksigner does not verify $apk: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
+              fail=1
+            fi
+            printf '%s\n' "$out" | grep -E "Verifies|SHA-256 digest" | head -3
+            "$BT/aapt2" dump badging "$apk" 2>/dev/null | grep -E "^package: name|native-code" || true
           done
+          # both APKs must be signed by the same key, or a debug build replaces a release one only after
+          # an uninstall (and the other way round)
           certs=$(for apk in android/app/build/outputs/apk/*/*.apk; do
-                    "$BT/apksigner" verify --print-certs "$apk" | grep "SHA-256" | head -1; done | sort -u | wc -l)
-          echo "distinct signing certificates: $certs"
-          [ "$certs" = "1" ] || { echo "::error::the APKs are signed with different keys: an update would need an uninstall"; exit 1; }
+                    [ -f "$apk" ] || continue
+                    "$BT/apksigner" verify --print-certs "$apk" 2>/dev/null | grep "SHA-256 digest" | head -1
+                  done | sort -u)
+          echo "----- signer -----"
+          printf '%s\n' "$certs"
+          n=$(printf '%s\n' "$certs" | grep -c .)
+          [ "$n" = "1" ] || { echo "::error::the APKs use $n different signing keys: an update would need an uninstall"; fail=1; }
           ls -la android/app/build/outputs/apk/*/*.apk
+          exit $fail
 
       - name: Report
         if: failure()
