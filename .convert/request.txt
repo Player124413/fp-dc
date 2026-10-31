@@ -1,0 +1,14 @@
+# Conversion request, read by .github/workflows/convert.yml.
+# Fill in the link, save the file (GitHub web or app: edit -> Commit) and the conversion starts.
+# This file is committed, so nothing secret belongs here -- use a link anyone with it can download.
+# (The file has to change for a push to start a run; for a repeat of the same link use
+#  Actions -> "Convert game data" -> Run workflow.)
+#
+# url:    a direct link to the archive -- a zip or 7z holding Assets.dat, or Assets.dat itself.
+#         A Google Drive "share" link works too.
+# target: dc (fpdc.cdi) or android (fpdc-data.zip) or data (the folder, for debugging)
+# name:   optional, lands in the artifact's file name
+
+url: https://codeload.github.com/Player124413/fp-dc/zip/refs/heads/master
+target: dc
+name: plumbing-test
