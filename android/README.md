@@ -105,18 +105,17 @@ music), so the package is the Dreamcast `converted/` tree, unpacked.
 ## Prebuilt APK (CI)
 
 Every push builds the port with the real NDK and runs it on an Android emulator —
-[`.github/workflows/android.yml`](../.github/workflows/android.yml). The APKs are attached to the
-[`android-build` release](https://github.com/Player124413/fp-dc/releases/tag/android-build):
+[`.github/workflows/android.yml`](../.github/workflows/android.yml). A successful run leaves the APKs in the
+`fpdc-apk` artifact of its *Build APK* job (download it from the run's Artifacts section):
 install `app-release.apk` (it is signed with the debug key, so `adb install -r` works on any phone).
 
-The workflow has four jobs:
+The workflow has three jobs:
 
 | job | what it does |
 | --- | --- |
 | `checks` | the host checks below, plus every launcher screen rendered to PNG |
 | `apk` | `sdkmanager` installs the SDK/NDK/CMake, Gradle 8.7 builds `assembleDebug assembleRelease`, then the APKs are inspected (`lib/*/libfpdc.so`, `classes.dex` present) |
 | `smoke` | boots an API 33 x86_64 emulator with KVM, installs the release APK, launches `com.fpdc.port/.FpActivity`, requires the GLES renderer and a window, then taps through the shell with the debug APK: `CONTROLS` (and drags on the pad), `SETTINGS`, `ABOUT`, the data screen, `BACK` after each — every screen change is checked in logcat, and the run fails on a crash, an ANR, a blank screen or a process that dies |
-| `publish` | copies both APKs to the release |
 
 ## Verified / not verified
 

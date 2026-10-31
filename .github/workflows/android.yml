@@ -2,16 +2,13 @@ name: Android
 
 # Everything that can be checked without a phone: the host-side checks of the port, the APK build with
 # the real NDK, and a smoke test that boots an emulator, installs the APK and launches the launcher.
-# Failures are echoed as check-run annotations (the log downloads are not always reachable), and every
-# successful build publishes the APKs to a release so they can be downloaded from a stable URL.
+# Failures are echoed as check-run annotations (the log downloads are not always reachable); the APKs
+# of a successful build are the 'fpdc-apk' artifact of the run.
 
 on:
   push:
   pull_request:
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 concurrency:
   group: android-${{ github.ref }}
@@ -442,7 +439,6 @@ jobs:
           echo "----- symbolised -----"
           while IFS= read -r l; do echo "  $l"; echo "::warning::sym: $l"; done < /tmp/sym.txt
 
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -450,47 +446,3 @@ jobs:
           path: out/
           if-no-files-found: warn
           retention-days: 14
-
-  # ----------------------------------------------------------------------------------- stable download
-  publish:
-    name: Publish the APK
-    needs: apk
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: fpdc-apk
-          path: apk
-
-      - name: Attach to the 'android-build' release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ github.sha }}
-          BRANCH: ${{ github.ref_name }}
-        run: |
-          set -e
-          ls -la apk
-          TAG=android-build
-          if ! out=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" 2>&1); then
-            echo "(no release yet: $out)"
-            if ! out=$(gh release create "$TAG" -R "$GITHUB_REPOSITORY" --prerelease \
-                 --title "Android build" --notes "Newest APK of the Android port." 2>&1); then
-              echo "::error::gh release create: $(echo "$out" | head -3 | tr '\n' ' ')"
-              exit 1
-            fi
-          fi
-          mapfile -t files < <(find apk -name '*.apk')
-          [ "${#files[@]}" -gt 0 ] || { echo "::error::no .apk in the artifact: $(find apk -type f | head -5 | tr '\n' ' ')"; exit 1; }
-          echo "uploading: ${files[*]}"
-          if ! out=$(gh release upload "$TAG" -R "$GITHUB_REPOSITORY" "${files[@]}" --clobber 2>&1); then
-            echo "::error::gh release upload: $(echo "$out" | head -3 | tr '\n' ' ')"
-            exit 1
-          fi
-          gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --prerelease \
-            --notes "Newest APK of the Android port. Built from $SHA (branch $BRANCH).
-
-          Install app-release.apk (sideload). The APK ships no game data: convert your own Assets.dat
-          (python3 tools/builder/fpbuild.py android Assets.dat) and use IMPORT DATA in the launcher."
-          echo "release: ${{ github.server_url }}/$GITHUB_REPOSITORY/releases/tag/$TAG"

@@ -57,9 +57,9 @@ upscaled by the GPU.
   `python3 tools/android/make_android_data.py converted -o fpdc-data.zip`, copy the zip to the phone and use
   **IMPORT DATA** in the launcher.
 
-Prebuilt APKs: the CI builds the port with the NDK and runs it on an emulator on every push, and attaches
-the result to the [`android-build` release](https://github.com/Player124413/fp-dc/releases/tag/android-build) --
-install `app-release.apk`. See [`.github/workflows/android.yml`](.github/workflows/android.yml).
+Prebuilt APK: the CI builds the port with the NDK and runs it on an emulator on every push; a successful run
+leaves `app-release.apk` in the `fpdc-apk` artifact of the *Build APK* job. See
+[`.github/workflows/android.yml`](.github/workflows/android.yml).
 
 Host-side checks (no NDK, no device): `make -C tools/android check` -- syntax-checks the GLES backends against
 stub NDK headers, verifies the Dreamcast texture twiddle against `tools/twiddle_disc.py`, and renders every
