@@ -205,10 +205,10 @@ static void flat_quad(float x0, float y0, float x1, float y1, uint32_t c0, uint3
     for (int i = 0; i < 4; i++) {
         v[i].x = xs[i];
         v[i].y = ys[i];
-        v[i].c[0] = (uint8_t)(cols[i] >> 24);
-        v[i].c[1] = (uint8_t)(cols[i] >> 16);
-        v[i].c[2] = (uint8_t)(cols[i] >> 8);
-        v[i].c[3] = (uint8_t)cols[i];
+        v[i].c[0] = ui_ch_r(cols[i]);
+        v[i].c[1] = ui_ch_g(cols[i]);
+        v[i].c[2] = ui_ch_b(cols[i]);
+        v[i].c[3] = ui_ch_a(cols[i]);
     }
     nfq++;
 }
@@ -229,8 +229,8 @@ static void sdf_quad(float cx, float cy, float hw, float hh, float rad, float th
         v[i].rad = rad;
         v[i].th = th;
         v[i].shape = (float)shape;
-        v[i].c0[0] = (uint8_t)(c0 >> 24); v[i].c0[1] = (uint8_t)(c0 >> 16); v[i].c0[2] = (uint8_t)(c0 >> 8); v[i].c0[3] = (uint8_t)c0;
-        v[i].c1[0] = (uint8_t)(c1 >> 24); v[i].c1[1] = (uint8_t)(c1 >> 16); v[i].c1[2] = (uint8_t)(c1 >> 8); v[i].c1[3] = (uint8_t)c1;
+        v[i].c0[0] = ui_ch_r(c0); v[i].c0[1] = ui_ch_g(c0); v[i].c0[2] = ui_ch_b(c0); v[i].c0[3] = ui_ch_a(c0);
+        v[i].c1[0] = ui_ch_r(c1); v[i].c1[1] = ui_ch_g(c1); v[i].c1[2] = ui_ch_b(c1); v[i].c1[3] = ui_ch_a(c1);
     }
     nsq++;
 }
@@ -256,8 +256,8 @@ void ui_end(void) { flush_all(); }
 
 void ui_clear(uint32_t rgba) {
     flush_all();
-    glClearColor((GLclampf)((rgba >> 16) & 255) / 255.0f, (GLclampf)((rgba >> 8) & 255) / 255.0f,
-                 (GLclampf)(rgba & 255) / 255.0f, 1.0f);
+    glClearColor((GLclampf)ui_ch_r(rgba) / 255.0f, (GLclampf)ui_ch_g(rgba) / 255.0f,
+                 (GLclampf)ui_ch_b(rgba) / 255.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
@@ -317,10 +317,10 @@ void ui_quad(const float xy[8], uint32_t rgba) {
     for (int i = 0; i < 4; i++) {
         v[i].x = p[i * 2];
         v[i].y = p[i * 2 + 1];
-        v[i].c[0] = (uint8_t)(rgba >> 24);
-        v[i].c[1] = (uint8_t)(rgba >> 16);
-        v[i].c[2] = (uint8_t)(rgba >> 8);
-        v[i].c[3] = (uint8_t)rgba;
+        v[i].c[0] = ui_ch_r(rgba);
+        v[i].c[1] = ui_ch_g(rgba);
+        v[i].c[2] = ui_ch_b(rgba);
+        v[i].c[3] = ui_ch_a(rgba);
     }
     nfq++;
 }

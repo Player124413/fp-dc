@@ -13,8 +13,8 @@ ANDROID_SRC := $(ROOT)/src/renderer/render_gles.c $(ROOT)/src/renderer/ui_gles.c
                $(ROOT)/src/renderer/twiddle.c \
                $(ROOT)/src/platform/android/plat_android.c $(ROOT)/src/platform/android/snd_android.c
 
-.PHONY: check syntax twiddle font shell preview
-check: syntax twiddle font shell
+.PHONY: check syntax twiddle font colour shell preview
+check: syntax twiddle font colour shell
 
 syntax:
 	@for f in $(ANDROID_SRC); do echo "  syntax-check $$f"; $(CC) $(SYNTAX) $$f || exit 1; done
@@ -25,6 +25,9 @@ twiddle:
 
 font:
 	@python3 make_font.py --check
+
+colour:
+	@$(CC) -std=gnu11 -Wall -Wextra -o /tmp/fpdc_check_colour check_colour.c && /tmp/fpdc_check_colour
 
 shell:
 	@$(MAKE) -C ../preview >/dev/null && echo "  shell: preview harness builds"

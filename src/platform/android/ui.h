@@ -97,6 +97,13 @@ float ui_text(float x, float y, float px, uint32_t rgba, const char *s);       /
 float ui_text_c(float cx, float y, float px, uint32_t rgba, const char *s);    /* centred on cx */
 float ui_text_r(float rx, float y, float px, uint32_t rgba, const char *s);    /* right edge at rx */
 float ui_text_w(float px, const char *s);
+/* The packing above, in one place: a backend that unpacks it as RGBA draws the alpha as red (the
+ * launcher looked like a red neon mess on a phone for exactly that reason). */
+static inline uint8_t ui_ch_a(uint32_t c) { return (uint8_t)(c >> 24); }
+static inline uint8_t ui_ch_r(uint32_t c) { return (uint8_t)((c >> 16) & 0xffu); }
+static inline uint8_t ui_ch_g(uint32_t c) { return (uint8_t)((c >> 8) & 0xffu); }
+static inline uint8_t ui_ch_b(uint32_t c) { return (uint8_t)(c & 0xffu); }
+
 #define UI_TEXT_H(px) (7.0f * (px))
 
 /* OpenGL ES backend (ui_gles.c): builds the two programs and the vertex buffers. Needs a current
