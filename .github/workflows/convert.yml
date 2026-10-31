@@ -201,6 +201,11 @@ jobs:
           echo "----- what came out -----"
           ls -la out 2>/dev/null || true
           du -sh out/* 2>/dev/null || true
+          if [ -d out/data ]; then
+            echo "the data folder: $(find out/data -type f | wc -l) files"
+            du -sh out/data/* 2>/dev/null | sort -h | tail -12 || true
+            echo "::notice::converted $(find out/data -type f | wc -l) files, $(du -sh out/data | cut -f1) in out/data"
+          fi
 
       - name: Pack the converted data when there is no disc image
         if: env.SKIP != '1' && always()
