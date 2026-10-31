@@ -42,8 +42,21 @@ gradle wrapper --gradle-version 8.7     # once (or just open the folder in Andro
 ```
 
 `local.properties` needs `sdk.dir=...` (Android Studio writes it). ABIs built: `arm64-v8a`, `armeabi-v7a`,
-`x86_64` (emulators). `minSdk 26` — AAudio, the low-latency output, starts there; GLES 3.0 is required by the
+`x86_64`. `minSdk 26` — AAudio, the low-latency output, starts there; GLES 3.0 is required by the
 manifest and is universal since 2013.
+
+### Installing an update: no uninstall
+
+Every build is signed with the same key, `android/keystore/fpdc.p12` (a sideload key, committed on purpose:
+Android refuses an update whose signature differs, and that is what forces an uninstall). `versionCode` grows
+with the CI run number, so a new APK is always an *update*:
+
+```sh
+adb install -r app-release.apk          # debug and release share the key, so either can replace the other
+```
+
+The CI checks this on every build: it verifies both APKs, prints the certificate fingerprint and fails when
+the two are not signed with the same key.
 
 ## Game data
 
@@ -102,20 +115,40 @@ music), so the package is the Dreamcast `converted/` tree, unpacked.
 | `audio.music` / `audio.sfx` | 80 / 90 | master volumes (the game's own options still apply) |
 | `pad.*` | | the touch layout written by the editor |
 
+## The log (what to send when something is wrong)
+
+Every line the port logs goes to `fpdc.log` twice: logcat (tag `fpdc`, `fpdc/ui`) and a file
+
+```
+/sdcard/Android/data/com.fpdc.port/files/fpdc.log          <- the current session
+/sdcard/Android/data/com.fpdc.port/files/fpdc.prev.log     <- the session before it (a crash survives here)
+```
+
+The file starts with the device, the Android API level, the window in pixels and dp, and the data folder, then
+one line per event with a relative timestamp, and every 150 frames a summary of what the renderer actually did
+(`frame 300: win 2652x1200 dp 2.75 ui 2652x1200, 812 quads + 63 sdf in 2 calls, glerr 0x0, launcher`). An
+uncaught Java exception is appended as a stack trace, and a native crash leaves its last lines in
+`fpdc.prev.log` after the restart.
+
+**ABOUT -> SHARE LOG FILE** hands the file to any messenger or mail app (it is sent as text, so no file
+permissions are involved). The same file can be pulled over USB/adb:
+
+```sh
+adb pull /sdcard/Android/data/com.fpdc.port/files/fpdc.log
+```
+
 ## Prebuilt APK (CI)
 
-Every push builds the port with the real NDK and runs it on an Android emulator —
-[`.github/workflows/android.yml`](../.github/workflows/android.yml). A successful run leaves the APKs in the
-`fpdc-apk` artifact of its *Build APK* job (download it from the run's Artifacts section):
-install `app-release.apk` (it is signed with the debug key, so `adb install -r` works on any phone).
+Every push builds the port with the real NDK — [`.github/workflows/android.yml`](../.github/workflows/android.yml).
+A successful run leaves the APKs in the `fpdc-apk` artifact of its *Build APK* job (download it from the run's
+Artifacts section) and installs over the previous version (see *Installing an update* above).
 
-The workflow has three jobs:
+The workflow has two jobs, and it does not run anything on an emulator — the port is tested on a real phone:
 
 | job | what it does |
 | --- | --- |
 | `checks` | the host checks below, plus every launcher screen rendered to PNG |
-| `apk` | `sdkmanager` installs the SDK/NDK/CMake, Gradle 8.7 builds `assembleDebug assembleRelease`, then the APKs are inspected (`lib/*/libfpdc.so`, `classes.dex` present) |
-| `smoke` | boots an API 33 x86_64 emulator with KVM, installs the release APK, launches `com.fpdc.port/.FpActivity`, requires the GLES renderer and a window, then taps through the shell with the debug APK: `CONTROLS` (and drags on the pad), `SETTINGS`, `ABOUT`, the data screen, `BACK` after each — every screen change is checked in logcat, and the run fails on a crash, an ANR, a blank screen or a process that dies |
+| `apk` | `sdkmanager` installs the SDK/NDK/CMake, Gradle 8.7 builds `assembleDebug assembleRelease`, then both APKs are inspected: `lib/*/libfpdc.so` and `classes.dex` present, signed, and the two certificate fingerprints identical (that is what makes an update install without an uninstall) |
 
 ## Verified / not verified
 
@@ -130,14 +163,15 @@ make -C tools/android preview    # every launcher/editor/in-game screen as PNG
 `tools/android/ndkstub/`, verifies `fp_untwiddle_offset()` against `tools/twiddle_disc.py` for 15 atlas shapes,
 checks the generated 5×7 font, and builds the shell against the host UI backend.
 
-Verified by CI on an emulator: the NDK build of all three ABIs, the EGL surface lifecycle (created, torn
-down, created again after `BACK`), the launcher, the controls editor, the settings and the about screen
-rendering through the GLES backend, touch input, the BACK handling, and that nothing crashes in between.
+Verified by CI: the NDK build of all three ABIs, both APKs carrying `libfpdc.so` and `classes.dex`, the
+signature being identical across builds, and the host checks above.
 
-**Not verified:** AAudio latency on a given phone (`-no-audio` in CI, so the mixer is never pulled), real
-touch feel, thermals, and the game itself on a device — the CI emulator has no game data, so the shell is
-what runs there. `plat_android.c` logs to logcat under the tag `fpdc` (and `fpdc/ui` for the shell) —
-`adb logcat -s fpdc fpdc/ui` is the first thing to look at if something misbehaves.
+**Verified on a phone by hand** (that is the point of the log): the launcher, the controls editor, the
+settings, the import of the data package, touch and gamepad input, and the game itself.
+
+**Not verified by CI at all:** anything that needs a device — AAudio latency, the real touch feel, thermals,
+and the GPU-specific rendering. That is why the log exists: `ADB`/`SHARE LOG FILE`, and the numbers in it
+(window, dp, ui target, quads, GL errors) say what the renderer did on that phone.
 
 ## Why ETC2 is optional
 

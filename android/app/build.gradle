@@ -9,12 +9,27 @@ android {
     // the pinned one is not installed).
     ndkVersion project.findProperty('fpNdk') ?: '26.1.10909125'
 
+    signingConfigs {
+        // One key for every build, committed on purpose: Android refuses to update an installed app
+        // when the signature changes ("app not installed"), so a fresh APK would need an uninstall
+        // first. This is a sideload key, not a store identity -- it is public by design.
+        fpdc {
+            storeFile file('../keystore/fpdc.p12')
+            storeType 'PKCS12'
+            storePassword 'fpdc-android'
+            keyAlias 'fpdc'
+            keyPassword 'fpdc-android'
+        }
+    }
+
     defaultConfig {
         applicationId 'com.fpdc.port'
         minSdk 26                       // AAudio (the low-latency output) starts at API 26
         targetSdk 34
-        versionCode 1
-        versionName '1.0'
+        // an update must never look like a downgrade: the CI run number when there is one, else
+        // -PfpVersionCode=..., else 1 for a local build
+        versionCode (project.findProperty('fpVersionCode') ?: System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+        versionName '1.1'
         ndk {
             // 64-bit first (every phone since 2019); armeabi-v7a for older ones; x86_64 for emulators
             abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
@@ -39,12 +54,12 @@ android {
             minifyEnabled false        // no Java to shrink; the game is native
             jniDebuggable false
             debuggable false
-            // Sideloading build: signed with the debug key so that `assembleRelease` gives an APK you can
-            // install. Replace this with your own signingConfig before publishing anything.
-            signingConfig signingConfigs.debug
+            // the same key as the debug build: either APK updates the other, no uninstall needed
+            signingConfig signingConfigs.fpdc
         }
         debug {
             jniDebuggable true
+            signingConfig signingConfigs.fpdc
         }
     }
 

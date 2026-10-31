@@ -29,6 +29,7 @@ struct JNINativeInterface {
     void (*ExceptionClear)(JNIEnv *);
     void *reserved3x[9];
     const char *(*GetStringUTFChars)(JNIEnv *, jstring, jboolean *);
+    jstring (*NewStringUTF)(JNIEnv *, const char *);
     void (*ReleaseStringUTFChars)(JNIEnv *, jstring, const char *);
     void (*DeleteLocalRef)(JNIEnv *, jobject);
 };

@@ -129,7 +129,7 @@ void shell_game_input(input_t *in) {
 
 /* ------------------------------------------------------------------ frames */
 static void overlay_frame(float dt) {
-    ui_begin(s_w, s_h, s_dp);
+    ui_begin(s_w, s_h, s_dp);                          /* on top of the game picture: never clear here */
     w_begin(dt);
     if (s_editor) editor_draw(dt);
     else {
@@ -158,6 +158,7 @@ void shell_frame(float dt) {
     }
     if (s_in_game) return;                            /* the overlay is drawn by shell_draw_overlay */
     ui_begin(s_w, s_h, s_dp);
+    ui_clear(UI_BG_TOP);                              /* never show whatever was in the buffer before */
     w_begin(dt);
     if (s_editor) editor_draw(dt);
     else launcher_draw(dt, s_screen);

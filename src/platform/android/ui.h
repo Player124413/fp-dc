@@ -103,6 +103,8 @@ float ui_text_w(float px, const char *s);
  * context; called from rgl_init(). */
 int   ui_gles_init(void);
 void  ui_release(void);
+/* what the last frame drew (quads, sdf shapes, draw calls, first GL error): for the log a player sends */
+void  ui_stats(int *quads, int *sdf, int *flushes, int *glerr);
 /* text with a 1-font-pixel drop shadow: readable over the game picture without a panel */
 void  ui_text_sh(float x, float y, float px, uint32_t rgba, uint32_t shadow, const char *s);
 

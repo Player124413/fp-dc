@@ -1,0 +1,153 @@
+name: Convert game data
+
+# Turns a game data archive into something the ports can use, without a PC setup:
+#   * "dc"      -> fpdc.cdi, a Dreamcast disc image (burn it, or open it in Flycast/Redream)
+#   * "android" -> fpdc-data.zip, the package the launcher imports (IMPORT GAME DATA)
+#   * "data"    -> the converted data folder on its own (for debugging the converter)
+#
+# Run it from the Actions tab: "Convert game data" -> Run workflow, paste a *direct* download link to
+# the archive (zip/7z is unpacked; a bare Assets.dat works too). Google Drive share links are turned
+# into direct ones automatically; for other hosts use the link the browser downloads from.
+# The result appears in the run's Artifacts section when it finishes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Direct download link to the archive (zip with Assets.dat inside, or Assets.dat itself)'
+        required: true
+        type: string
+      target:
+        description: 'What to build'
+        required: true
+        default: dc
+        type: choice
+        options:
+          - dc
+          - android
+          - data
+      name:
+        description: 'Optional label for the artifact file names'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: convert-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  convert:
+    name: Convert (${{ inputs.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download the archive
+        env:
+          URL: ${{ inputs.url }}
+        run: |
+          set -o pipefail
+          mkdir -p in
+          url="$URL"
+          # a Google Drive "share" link is not a download link; the direct form needs the id
+          case "$url" in
+            *drive.google.com*)
+              id=$(printf '%s' "$url" | sed -n 's#.*/d/\([^/]*\)/.*#\1#p; s#.*[?&]id=\([^&]*\).*#\1#p' | head -1)
+              if [ -n "$id" ]; then
+                echo "google drive id: $id"
+                url="https://drive.google.com/uc?export=download&id=$id&confirm=t"
+              fi
+              ;;
+          esac
+          echo "downloading $url"
+          curl -L --retry 3 --retry-delay 5 --fail --max-time 3600 -o "in/payload" "$url" \
+            || { echo "::error::the download failed (is the link a direct file link?)"; exit 1; }
+          ls -la in
+          file in/payload || true
+          echo "size: $(du -h in/payload | cut -f1)"
+
+      - name: Unpack and find Assets.dat
+        run: |
+          set -o pipefail
+          mkdir -p src
+          magic=$(head -c 4 in/payload | od -An -tx1 | tr -d ' \n')
+          if [ "$magic" = "504b0304" ]; then
+            echo "a zip archive"
+            unzip -q -o in/payload -d src || { echo "::error::unzip failed"; exit 1; }
+          elif [ "$magic" = "377abcaf" ]; then
+            echo "a 7z archive"
+            sudo apt-get update -qq && sudo apt-get install -y -qq p7zip-full
+            7z x -y -osrc in/payload > /dev/null || { echo "::error::7z failed"; exit 1; }
+          else
+            echo "not an archive: taking it as Assets.dat"
+            cp in/payload src/Assets.dat
+          fi
+          ls -la src | head -20
+          found=$(find src -iname 'Assets.dat' -type f | head -1)
+          if [ -z "$found" ]; then
+            echo "::error::no Assets.dat in the archive (it holds: $(find src -maxdepth 2 | head -10 | tr '\n' ' '))"
+            exit 1
+          fi
+          echo "Assets.dat: $found ($(du -h "$found" | cut -f1))"
+          echo "ASSETS=$found" >> $GITHUB_ENV
+
+      - name: Convert
+        env:
+          TARGET: ${{ inputs.target }}
+          LABEL: ${{ inputs.name }}
+        run: |
+          set -o pipefail
+          mkdir -p out work
+          args="--out out/data --work work"
+          case "$TARGET" in
+            dc)      args="$args --cdi out/fpdc.cdi" ;;
+            android) args="$args --zip out/fpdc-data.zip" ;;
+            data)    ;;
+          esac
+          echo "python3 tools/builder/fpbuild.py $args $TARGET $ASSETS"
+          python3 tools/builder/fpbuild.py $args "$TARGET" "$ASSETS" 2>&1 | tee /tmp/convert.log
+          echo "----- what came out -----"
+          ls -la out
+          find out -maxdepth 1 -type f -size +1M -printf '%f %s bytes\n' || true
+
+      - name: Report
+        if: failure()
+        run: |
+          if [ -f /tmp/convert.log ]; then
+            grep -E "FAIL|Error|error|Traceback|missing|not found|cannot" /tmp/convert.log \
+              | head -25 | cut -c1-300 | while IFS= read -r l; do echo "::error::$l"; done
+          fi
+
+      - name: Name the result
+        if: success()
+        env:
+          TARGET: ${{ inputs.target }}
+          LABEL: ${{ inputs.name }}
+        run: |
+          set -e
+          tag=$(printf '%s' "${LABEL:-run-${{ github.run_number }}}" | tr -c 'A-Za-z0-9._-' '_')
+          case "$TARGET" in
+            dc)      src=out/fpdc.cdi;          dst="out/fpdc-$tag.cdi";        [ -f "$src" ] || dst="" ;;
+            android) src=out/fpdc-data.zip;     dst="out/fpdc-data-$tag.zip";   [ -f "$src" ] || dst="" ;;
+            data)    src=out/data;              dst="" ;;
+          esac
+          if [ -n "${dst:-}" ]; then mv "$src" "$dst"; fi
+          ls -la out
+          du -sh out/* 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: fpdc-${{ inputs.target }}
+          path: |
+            out/fpdc-*.cdi
+            out/fpdc-data-*.zip
+            out/data
+          if-no-files-found: error
+          retention-days: 30

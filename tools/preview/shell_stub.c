@@ -47,6 +47,8 @@ void shell_vibrate(int ms, int amplitude) {
 int shell_data_ok(void) { return data_ok; }
 long shell_data_bytes(void) { return data_ok ? data_bytes : 0; }
 const char *shell_data_dir(void) { return "/sdcard/Android/data/com.fpdc.port/files/data"; }
+const char *shell_log_file(void) { return "out/fpdc.log"; }
+void shell_log_share(void) {}
 void shell_data_import(void) {
     /* the preview pretends the user picked a valid package */
     import_status = 1;

@@ -324,6 +324,14 @@ static void about(void) {
     ui_text(MARGIN, y, px, UI_DIM, "NO GAME DATA IS SHIPPED - IT IS READ FROM YOUR OWN COPY.");
     y += UI_TEXT_H(px) + ui_dp(5);
     ui_text(MARGIN, y, px, UI_DIM, "THANKS FOR PLAYING, AND FOR READING THIS.");
+    y += UI_TEXT_H(px) + UI_TEXT_H(px) + ui_dp(6);
+    ui_text(MARGIN, y, px, UI_DIM, "SOMETHING WRONG? SEND THE LOG - IT IS ONE FILE:");
+    y += UI_TEXT_H(px) + ui_dp(4);
+    ui_text(MARGIN, y, px, UI_ACCENT, shell_log_file()[0] ? shell_log_file() : "(no log file)");
+    y += UI_TEXT_H(px) + ui_dp(8);
+    if (w_button(ID_ABOUT + 1, MARGIN, y, ui_is_wide() ? ui_dp(280) : w, ui_dp(44), "SHARE LOG FILE",
+                 W_PRIMARY, shell_log_file()[0] != 0))
+        shell_log_share();
 }
 
 /* ------------------------------------------------------------------ DATA */

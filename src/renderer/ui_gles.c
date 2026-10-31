@@ -34,6 +34,8 @@ static int nsq;
 
 static GLuint prog_flat, prog_sdf;
 static GLuint fvbo, fvibo, svbo, svibo;
+static GLuint vao;                       /* explicit: a driver must not rely on the default one */
+static int st_flat, st_sdf, st_flush, st_err;
 static int W, H;
 static float DENS = 2.0f;
 
@@ -121,6 +123,7 @@ int ui_gles_init(void) {
     prog_flat = mkprog(VS_FLAT, FS_FLAT, "flat");
     prog_sdf = mkprog(VS_SDF, FS_SDF, "sdf");
     if (!prog_flat || !prog_sdf) return -1;
+    glGenVertexArrays(1, &vao);
     glGenBuffers(1, &fvbo);
     glBindBuffer(GL_ARRAY_BUFFER, fvbo);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof fv, NULL, GL_STREAM_DRAW);
@@ -132,7 +135,16 @@ int ui_gles_init(void) {
     return 0;
 }
 
+/* what the last frame actually drew: a report from a phone needs these numbers */
+void ui_stats(int *quads, int *sdf, int *flushes, int *glerr) {
+    if (quads) *quads = st_flat;
+    if (sdf) *sdf = st_sdf;
+    if (flushes) *flushes = st_flush;
+    if (glerr) *glerr = st_err;
+}
+
 void ui_release(void) {
+    if (vao) { glDeleteVertexArrays(1, &vao); vao = 0; }
     if (prog_flat) { glDeleteProgram(prog_flat); prog_flat = 0; }
     if (prog_sdf) { glDeleteProgram(prog_sdf); prog_sdf = 0; }
     if (fvbo) { glDeleteBuffers(1, &fvbo); fvbo = 0; }
@@ -145,6 +157,7 @@ void ui_release(void) {
 /* ------------------------------------------------------------------ batches */
 static void flush_flat(void) {
     if (!nfq) return;
+    glBindVertexArray(vao);
     glUseProgram(prog_flat);
     glUniform2f(glGetUniformLocation(prog_flat, "u_target"), (float)W, (float)H);
     glBindBuffer(GL_ARRAY_BUFFER, fvbo);
@@ -154,12 +167,16 @@ static void flush_flat(void) {
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(fvtx_t), (void *)0);
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(fvtx_t), (void *)8);
+    for (GLuint a = 2; a < 6; a++) glDisableVertexAttribArray(a);   /* the SDF arrays point elsewhere */
     glDrawElements(GL_TRIANGLES, nfq * 6, GL_UNSIGNED_SHORT, (void *)0);
+    st_flat += nfq; st_flush++;
+    st_err |= (int)glGetError();
     nfq = 0;
 }
 
 static void flush_sdf(void) {
     if (!nsq) return;
+    glBindVertexArray(vao);
     glUseProgram(prog_sdf);
     glUniform2f(glGetUniformLocation(prog_sdf, "u_target"), (float)W, (float)H);
     glBindBuffer(GL_ARRAY_BUFFER, svbo);
@@ -173,6 +190,8 @@ static void flush_sdf(void) {
     glEnableVertexAttribArray(4); glVertexAttribPointer(4, 4, GL_UNSIGNED_BYTE, GL_TRUE, st, (void *)36);
     glEnableVertexAttribArray(5); glVertexAttribPointer(5, 4, GL_UNSIGNED_BYTE, GL_TRUE, st, (void *)40);
     glDrawElements(GL_TRIANGLES, nsq * 6, GL_UNSIGNED_SHORT, (void *)0);
+    st_sdf += nsq; st_flush++;
+    st_err |= (int)glGetError();
     nsq = 0;
 }
 
@@ -222,7 +241,10 @@ void ui_begin(int w, int h, float dp_scale) {
     H = h > 0 ? h : 1;
     DENS = dp_scale > 0.1f ? dp_scale : 1.0f;
     nfq = nsq = 0;
+    st_flat = st_sdf = st_flush = 0;
+    st_err = (int)glGetError();
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindVertexArray(vao);
     glViewport(0, 0, W, H);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);

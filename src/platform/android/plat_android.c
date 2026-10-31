@@ -17,8 +17,11 @@
  * Frame flow while a game is up:  game_draw() -> r_end() -> rgl_frame_end_hook() -> (upscale, touch
  * pad overlay, FPS, eglSwapBuffers).  The loading screen also goes through r_end(), so it is visible
  * during loads without the engine knowing anything about Android. */
+#include <android/api-level.h>
 #include <android/log.h>
 #include <dirent.h>
+#include <fcntl.h>
+#include <sys/system_properties.h>
 #include <sys/stat.h>
 #include <android_native_app_glue.h>
 #include <EGL/egl.h>
@@ -62,6 +65,14 @@ static int win_w = 1280, win_h = 720;
 static float dp_scale = 3.0f;
 
 static char dir_data[512], dir_files[512];
+
+/* The log the player can send: every plat_log() line also goes to <files>/fpdc.log, so a report is one
+ * tap away in the launcher (ABOUT -> SHARE LOG). The previous session is kept as fpdc.prev.log: a
+ * crash leaves no chance to say goodbye, but the log before it survives the restart. */
+static int log_fd = -1;
+static char log_path[560];
+static uint64_t log_t0_us;
+static char log_dev[92];
 static int data_ok;
 static long data_bytes;
 
@@ -87,6 +98,45 @@ uint64_t plat_time_us(void) {
     return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
 }
 
+static const char *device_name(void) {
+    static char name[92];
+    if (!name[0]) {
+        char v[PROP_VALUE_MAX];
+        if (__system_property_get("ro.product.manufacturer", v) > 0) {
+            snprintf(name, sizeof name, "%s ", v);
+            size_t n = strlen(name);
+            if (__system_property_get("ro.product.model", v) > 0)
+                snprintf(name + n, sizeof name - n, "%s", v);
+        } else if (__system_property_get("ro.product.model", v) > 0) {
+            snprintf(name, sizeof name, "%s", v);
+        } else {
+            snprintf(name, sizeof name, "unknown");
+        }
+    }
+    return name;
+}
+
+/* <files>/fpdc.log, with the previous run rotated to fpdc.prev.log */
+static void log_open(void) {
+    if (log_fd >= 0 || !dir_files[0]) return;
+    char prev[600];
+    snprintf(log_path, sizeof log_path, "%s/fpdc.log", dir_files);
+    snprintf(prev, sizeof prev, "%s/fpdc.prev.log", dir_files);
+    rename(log_path, prev);
+    log_fd = open(log_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (log_fd < 0) { log_path[0] = 0; return; }
+    log_t0_us = plat_time_us();
+    char hdr[420];
+    int n = snprintf(hdr, sizeof hdr,
+                     "fpdc %s -- Freedom Planet, Android port\n"
+                     "device: %s, android %d, %dx%d px at %.2fx (%.0fx%.0f dp)\n"
+                     "data: %s\n"
+                     "---- log ----\n",
+                     shell_build_version(), device_name(), android_get_device_api_level(), win_w, win_h, (double)dp_scale,
+                     win_w / (double)dp_scale, win_h / (double)dp_scale, dir_data);
+    if (n > 0) { ssize_t w = write(log_fd, hdr, (size_t)n); (void)w; }
+}
+
 void plat_log(const char *fmt, ...) {
     char b[512];
     va_list ap;
@@ -96,6 +146,11 @@ void plat_log(const char *fmt, ...) {
     size_t n = strlen(b);
     while (n && (b[n - 1] == '\n' || b[n - 1] == '\r')) b[--n] = 0;
     __android_log_print(ANDROID_LOG_INFO, LOG_TAG, "%s", b);
+    if (log_fd >= 0) {
+        char line[600];
+        int k = snprintf(line, sizeof line, "[%8.3f] %s\n", (double)(plat_time_us() - log_t0_us) / 1e6, b);
+        if (k > 0) { ssize_t w = write(log_fd, line, (size_t)k); (void)w; }
+    }
 }
 
 void *plat_alloc_aligned(size_t n) { return malloc(n ? n : 1); }
@@ -122,6 +177,13 @@ static void jni_call_void(const char *name, const char *sig, ...) {
         } else if (!strcmp(sig, "(Z)V")) {
             int a = va_arg(ap, int);
             (*jenv)->CallVoidMethod(jenv, act_obj(), m, (jboolean)(a ? JNI_TRUE : JNI_FALSE));
+        } else if (!strcmp(sig, "(Ljava/lang/String;)V")) {
+            const char *str = va_arg(ap, const char *);
+            jstring js = (*jenv)->NewStringUTF(jenv, str ? str : "");
+            if (js) {
+                (*jenv)->CallVoidMethod(jenv, act_obj(), m, js);
+                (*jenv)->DeleteLocalRef(jenv, js);
+            }
         }
         va_end(ap);
     } else if ((*jenv)->ExceptionCheck(jenv)) {
@@ -227,6 +289,7 @@ static void paths_init(void) {
     else snprintf(dir_data, sizeof dir_data, "/sdcard/Android/data/com.fpdc.port/files/data");
     if (in && *in) snprintf(dir_files, sizeof dir_files, "%s", in);
     else snprintf(dir_files, sizeof dir_files, "/data/data/com.fpdc.port/files");
+    log_open();
     plat_log("data: %s\nfiles: %s", dir_data, dir_files);
 }
 
@@ -344,10 +407,17 @@ const char *shell_build_version(void) { return "V1.0  ANDROID"; }
 void shell_device_info(char *buf, int cap) {
     int density = 0;
     if (APP && APP->config) density = AConfiguration_getDensity(APP->config);
-    snprintf(buf, (size_t)cap, "%dx%d  %.2fx  GLES3%s", win_w, win_h, (double)dp_scale,
-             snd_out_rate() ? "" : "  (NO AUDIO)");
-    (void)density;
+    snprintf(buf, (size_t)cap, "%dx%d  %.2fx (dpi %d)  %.0fx%.0f dp%s", win_w, win_h, (double)dp_scale, density,
+             win_w / (double)dp_scale, win_h / (double)dp_scale, snd_out_rate() ? "" : "  NO AUDIO");
 }
+
+/* the player's own report: hand the log to whatever can share it (Java side) */
+void shell_log_share(void) {
+    if (!log_path[0]) { plat_log("no log file to share"); return; }
+    plat_log("log shared: %s", log_path);
+    jni_call_void("shareLog", "(Ljava/lang/String;)V", log_path);
+}
+const char *shell_log_file(void) { return log_path; }
 
 /* ------------------------------------------------------------------ EGL */
 /* the window goes away (another app in front) but the context and every texture stay alive: Android
@@ -371,11 +441,17 @@ static void gfx_teardown(void) {
     if (edpy != EGL_NO_DISPLAY) { eglTerminate(edpy); edpy = EGL_NO_DISPLAY; }
 }
 
+/* dp scale for the shell UI: the display density, but a phone that reports ACONFIGURATION_DENSITY_ANY
+ * (0xfffe), 0 or some other nonsense would give a 400x scale and a launcher three times too big -- the
+ * window height is the reliable fallback (a phone is ~380-460 dp tall in landscape) */
 static float density_scale(void) {
-    if (!APP || !APP->config) return 3.0f;
-    int dpi = AConfiguration_getDensity(APP->config);
-    if (dpi <= 0) return 3.0f;
-    float s = (float)dpi / 160.0f;
+    float s = 0;
+    if (APP && APP->config) {
+        int dpi = AConfiguration_getDensity(APP->config);
+        if (dpi >= 96 && dpi <= 1000) s = (float)dpi / 160.0f;
+        else plat_log("density %d is not usable, falling back to the window height", dpi);
+    }
+    if (s <= 0) s = win_h > 0 ? (float)win_h / 400.0f : 2.5f;
     if (s < 0.75f) s = 0.75f;
     if (s > 5.0f) s = 5.0f;
     return s;
@@ -758,6 +834,14 @@ void android_main(struct android_app *app) {
                 apply_settings();
                 game_draw();          /* ends in r_end() -> frame_end_hook() -> present + swap */
             }
+        }
+
+        if ((ticks % 150) == 0) {
+            int q = 0, sdf = 0, fl = 0, err = 0;
+            ui_stats(&q, &sdf, &fl, &err);
+            plat_log("frame %u: win %dx%d dp %.2f ui %dx%d, %d quads + %d sdf in %d calls, glerr 0x%x, %s",
+                     ticks, win_w, win_h, (double)dp_scale, ui_w(), ui_h(), q, sdf, fl, (unsigned)err,
+                     shell_active() ? "launcher" : "game");
         }
 
         if (shell_take_exit()) want_exit = 1;

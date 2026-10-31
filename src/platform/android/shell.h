@@ -32,6 +32,9 @@ void  shell_exit_app(void);
 const char *shell_build_version(void);
 /* device facts for the ABOUT / data screens (filled by the platform, may be empty) */
 void  shell_device_info(char *buf, int cap);
+/* the log file the player can send us (empty when the platform has none) and the share sheet */
+const char *shell_log_file(void);
+void  shell_log_share(void);
 
 /* ---------------------------------------------------------------- shell state */
 void  shell_set_screen(int w, int h, float dp_scale);   /* the platform reports the window each resize */

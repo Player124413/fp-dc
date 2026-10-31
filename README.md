@@ -57,9 +57,16 @@ upscaled by the GPU.
   `python3 tools/android/make_android_data.py converted -o fpdc-data.zip`, copy the zip to the phone and use
   **IMPORT DATA** in the launcher.
 
-Prebuilt APK: the CI builds the port with the NDK and runs it on an emulator on every push; a successful run
-leaves `app-release.apk` in the `fpdc-apk` artifact of the *Build APK* job. See
-[`.github/workflows/android.yml`](.github/workflows/android.yml).
+Prebuilt APK: the CI builds the port with the NDK on every push; a successful run leaves `app-release.apk` in
+the `fpdc-apk` artifact of the *Build APK* job ([`.github/workflows/android.yml`](.github/workflows/android.yml)).
+Every build carries the same signing key and a growing `versionCode`, so a new APK installs *over* the old one
+(`adb install -r`, or just tap the file) — no uninstall, and the save data and imported game data stay.
+
+Something wrong on the phone? The port writes `fpdc.log` next to its data
+(`/sdcard/Android/data/com.fpdc.port/files/`) and **ABOUT -> SHARE LOG FILE** in the launcher sends it
+anywhere. The Dreamcast side of the same data conversion is a workflow too:
+**[Convert game data](.github/workflows/convert.yml)** takes a download link to your archive and gives back
+`fpdc.cdi` (Actions tab -> Run workflow).
 
 Host-side checks (no NDK, no device): `make -C tools/android check` -- syntax-checks the GLES backends against
 stub NDK headers, verifies the Dreamcast texture twiddle against `tools/twiddle_disc.py`, and renders every

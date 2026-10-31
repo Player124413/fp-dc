@@ -14,6 +14,9 @@ import android.view.WindowManager;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.PrintWriter;
+import java.io.RandomAccessFile;
+import java.io.StringWriter;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.zip.ZipEntry;
@@ -46,6 +49,7 @@ public class FpActivity extends NativeActivity {
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
+        installCrashHandler();
         /* immersive: the launcher and the game own every pixel */
         final View decor = getWindow().getDecorView();
         decor.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE
@@ -60,6 +64,71 @@ public class FpActivity extends NativeActivity {
      *  the activity must not finish on it: the native side reads the key and decides. */
     @Override
     public void onBackPressed() {
+    }
+
+    // ---------------------------------------------------------------- the log the player sends us
+
+    /** Appends the stack trace of an uncaught Java exception to the same fpdc.log the native side writes,
+     *  so a report from a phone has the Java half of the story as well. */
+    private void installCrashHandler() {
+        final Thread.UncaughtExceptionHandler fallback = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread t, Throwable e) {
+                try {
+                    StringWriter sw = new StringWriter();
+                    e.printStackTrace(new PrintWriter(sw));
+                    FileOutputStream out = new FileOutputStream(new File(getFilesDir(), "fpdc.log"), true);
+                    out.write(("\n---- java crash in " + t.getName() + " ----\n" + sw).getBytes("UTF-8"));
+                    out.close();
+                } catch (Throwable ignored) {
+                }
+                if (fallback != null) fallback.uncaughtException(t, e);
+            }
+        });
+    }
+
+    /** ABOUT -> SHARE LOG FILE: the log as text, so any messenger or mail app can take it. The tail is what
+     *  matters, and an intent must stay under the binder limit. */
+    public void shareLog(final String path) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    File f = new File(path);
+                    if (!f.isFile()) {
+                        toast("the log file is not there: " + path);
+                        return;
+                    }
+                    long len = f.length();
+                    int take = (int) Math.min(len, 120000);
+                    byte[] buf = new byte[take];
+                    RandomAccessFile raf = new RandomAccessFile(f, "r");
+                    raf.seek(len - take);
+                    raf.readFully(buf);
+                    raf.close();
+                    String text = new String(buf, "UTF-8");
+                    Intent send = new Intent(Intent.ACTION_SEND);
+                    send.setType("text/plain");
+                    send.putExtra(Intent.EXTRA_SUBJECT, "fpdc log (" + android.os.Build.MODEL + ")");
+                    send.putExtra(Intent.EXTRA_TEXT, text);
+                    Intent chooser = Intent.createChooser(send, "Send the fpdc log");
+                    chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(chooser);
+                } catch (Exception e) {
+                    toast("cannot share the log: " + e.getMessage());
+                }
+            }
+        });
+    }
+
+    private void toast(final String msg) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                android.widget.Toast.makeText(FpActivity.this, msg, android.widget.Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     // ---------------------------------------------------------------- shell services (JNI)
