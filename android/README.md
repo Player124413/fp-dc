@@ -147,7 +147,7 @@ The workflow has two jobs, and it does not run anything on an emulator — the p
 
 | job | what it does |
 | --- | --- |
-| `checks` | the host checks below, plus every launcher screen rendered to PNG |
+| `checks` | the host checks below (the GLES sources compile against the stub NDK headers, the shell screens render to PNG, the colour packing is pinned), plus every launcher screen rendered to PNG |
 | `apk` | `sdkmanager` installs the SDK/NDK/CMake, Gradle 8.7 builds `assembleDebug assembleRelease`, then both APKs are inspected: `lib/*/libfpdc.so` and `classes.dex` present, signed, and the two certificate fingerprints identical (that is what makes an update install without an uninstall) |
 
 ## Verified / not verified
