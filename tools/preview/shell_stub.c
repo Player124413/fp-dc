@@ -26,7 +26,8 @@ void stub_reset(void) {
 }
 void stub_set_data(int ok, long bytes) { data_ok = ok; data_bytes = bytes; }
 int stub_vibrations(void) { return vibrations; }
-int stub_launched(void) { return launched; }
+/* shell_launch_game() is the real one now (shell.c): like the phone's loop, pick the request up */
+int stub_launched(void) { if (shell_take_launch()) launched = 1; return launched; }
 int stub_exited(void) { return exited; }
 int stub_screen_w(void) { return PREVIEW_W; }
 int stub_screen_h(void) { return PREVIEW_H; }
@@ -59,7 +60,7 @@ int shell_data_import_status(void) { return import_status; }
 const char *shell_data_import_message(void) { return import_msg; }
 int shell_file_read(const char *name, char *buf, int cap) { (void)name; (void)buf; (void)cap; return 0; }
 int shell_file_write(const char *name, const char *data, int len) { (void)name; (void)data; (void)len; return len; }
-void shell_launch_game(void) { launched = 1; }
+
 void shell_exit_app(void) { exited = 1; }
 const char *shell_build_version(void) { return "V0.1  PREVIEW"; }
 void shell_device_info(char *buf, int cap) {

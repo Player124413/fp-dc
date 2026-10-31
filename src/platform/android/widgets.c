@@ -21,6 +21,10 @@ static struct {
 static float ptr_x = -1, ptr_y = -1;
 static int down_ptr = -1;        /* pointer id holding the press */
 static int down_id = -1;         /* widget it started on */
+static int press_id = -1;        /* the widget a press *started* on, consumed by the slider: a tap on
+                                  * a track jumps there instead of needing a drag */
+static float press_x;
+static int frame_no, press_frame; /* the flag is only good for the frame the press belongs to */
 static int click[W_MAX];
 static float DT = 1.0f / 60.0f;
 
@@ -28,6 +32,7 @@ static inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 
 void w_begin(float dt) {
     DT = dt > 0 ? (dt > 0.1f ? 0.1f : dt) : 1.0f / 60.0f;
+    frame_no++;
     for (int i = 0; i < W_MAX; i++) {
         w[i].r.used = 0;
         w[i].r.enabled = 1;
@@ -59,6 +64,9 @@ void w_touch(int phase, int id, float x, float y) {
     if (phase == 0) {
         down_ptr = id;
         down_id = hit_widget(x, y);
+        press_id = down_id;
+        press_x = x;
+        press_frame = frame_no + 1;      /* the frame that draws this press */
         if (down_id >= 0) w[down_id].drag = 1;
     } else if (phase == 1) {
         if (down_id >= 0) {
@@ -191,6 +199,14 @@ int w_slider(int id, float x, float y, float ww, float hh, const char *label, co
         float nv = (ptr_x - tx) / (tw > 1 ? tw : 1);
         nv = nv < 0 ? 0 : nv > 1 ? 1 : nv;
         if (nv != *v01) { *v01 = nv; changed = 1; }
+    } else if (press_id == id && press_frame == frame_no) {
+        /* a plain tap on the track: jump to where it landed (a tap that only touches the row looks
+         * like a dead button otherwise) */
+        press_id = -1;
+        float nv = (press_x - tx) / (tw > 1 ? tw : 1);
+        nv = nv < 0 ? 0 : nv > 1 ? 1 : nv;
+        if (nv != *v01) { *v01 = nv; changed = 1; }
+        click[id] = 0;                      /* a slider never fires a click of its own */
     }
     return changed;
 }

@@ -18,11 +18,7 @@
 #define MARGIN (ui_dp(26))
 #define HEADER_H (ui_dp(36))
 #define TOP (MARGIN + HEADER_H + ui_dp(18))
-/* widget ids: small integers, unique per screen (the widget table holds 128) */
-#define ID_HOME 0
-#define ID_SET 10
-#define ID_ABOUT 60
-#define ID_DATA 70
+/* the widget ids (ID_HOME, ID_SET, ...) are in shell.h: the host selftest taps them */
 
 static float clock_s;                       /* launcher animation clock (seconds) */
 static int last_ticks;
@@ -149,6 +145,17 @@ static void home(float dt) {
     float fpx = ui_dp(1.1f);
     ui_text(MARGIN, (float)ui_h() - MARGIN - UI_TEXT_H(fpx), fpx, 0x558a9ac0,
             "BACK: EXIT   -   IN GAME, THE GEAR OPENS THE CONTROL EDITOR");
+
+    if (shell_starting()) {
+        /* game_init() takes seconds on a phone: a tap on PLAY must not look like nothing happened */
+        ui_rect(0, 0, (float)ui_w(), (float)ui_h(), 0xaa060a14);
+        float bw = ui_is_wide() ? ui_dp(360) : (float)ui_w() - MARGIN * 2;
+        float bx = ((float)ui_w() - bw) * 0.5f, by = (float)ui_h() * 0.5f - ui_dp(46);
+        ui_rrect(bx, by, bw, ui_dp(92), ui_dp(14), UI_PANEL);
+        ui_rrect_line(bx, by, bw, ui_dp(92), ui_dp(14), ui_dp(1.5f), UI_ACCENT);
+        ui_text_c((float)ui_w() * 0.5f, by + ui_dp(24), ui_dp(1.7f), UI_ACCENT, "STARTING THE ENGINE...");
+        ui_text_c((float)ui_w() * 0.5f, by + ui_dp(56), ui_dp(1.2f), UI_DIM, "THE FIRST LOAD TAKES A FEW SECONDS");
+    }
 }
 
 /* ------------------------------------------------------------------ SETTINGS */

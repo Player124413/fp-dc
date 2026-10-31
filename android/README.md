@@ -147,7 +147,7 @@ The workflow has two jobs, and it does not run anything on an emulator — the p
 
 | job | what it does |
 | --- | --- |
-| `checks` | the host checks below (the GLES sources compile against the stub NDK headers, the shell screens render to PNG, the colour packing is pinned), plus every launcher screen rendered to PNG |
+| `checks` | the host checks below: the GLES sources compile against the stub NDK headers, every launcher screen renders to PNG, the colour packing and the draw order of the GLES backend are pinned by tests, and a selftest taps through the launcher (PLAY, the tabs, a row, a switch, a slider) checking that each one reacts |
 | `apk` | `sdkmanager` installs the SDK/NDK/CMake, Gradle 8.7 builds `assembleDebug assembleRelease`, then both APKs are inspected: `lib/*/libfpdc.so` and `classes.dex` present, signed, and the two certificate fingerprints identical (that is what makes an update install without an uninstall) |
 
 ## Verified / not verified
@@ -167,7 +167,10 @@ Verified by CI: the NDK build of all three ABIs, both APKs carrying `libfpdc.so`
 signature being identical across builds, and the host checks above.
 
 **Verified on a phone by hand** (that is the point of the log): the launcher, the controls editor, the
-settings, the import of the data package, touch and gamepad input, and the game itself.
+settings, the import of the data package, touch and gamepad input, and the game itself. The host tests catch
+the two whole classes of bug that only showed up on a phone so far: the GLES backend drew every rounded panel
+*over* the text (so button labels were invisible), and a tap that started the launcher's PLAY button went to an
+empty stub. `make -C tools/android check` runs both.
 
 **Not verified by CI at all:** anything that needs a device — AAudio latency, the real touch feel, thermals,
 and the GPU-specific rendering. That is why the log exists: `ADB`/`SHARE LOG FILE`, and the numbers in it

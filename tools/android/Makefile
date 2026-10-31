@@ -13,8 +13,8 @@ ANDROID_SRC := $(ROOT)/src/renderer/render_gles.c $(ROOT)/src/renderer/ui_gles.c
                $(ROOT)/src/renderer/twiddle.c \
                $(ROOT)/src/platform/android/plat_android.c $(ROOT)/src/platform/android/snd_android.c
 
-.PHONY: check syntax twiddle font colour shell preview
-check: syntax twiddle font colour shell
+.PHONY: check syntax twiddle font colour uiorder shell selftest preview
+check: syntax twiddle font colour uiorder shell selftest
 
 syntax:
 	@for f in $(ANDROID_SRC); do echo "  syntax-check $$f"; $(CC) $(SYNTAX) $$f || exit 1; done
@@ -29,8 +29,19 @@ font:
 colour:
 	@$(CC) -std=gnu11 -Wall -Wextra -o /tmp/fpdc_check_colour check_colour.c && /tmp/fpdc_check_colour
 
+uiorder:
+	@$(CC) -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-strict-prototypes -I$(STUB) \
+	   -o /tmp/fpdc_check_ui_order check_ui_order.c -lm && /tmp/fpdc_check_ui_order
+
 shell:
 	@$(MAKE) -C ../preview >/dev/null && echo "  shell: preview harness builds"
+
+# taps every screen the way a finger would: PLAY, the tabs, a row, a switch, a slider
+selftest: shell
+	@mkdir -p ../preview/out
+	@out=$$(../preview/fpdc_preview ../preview/out selftest 2>&1); \
+	 printf '%s\n' "$$out" | grep -E '^(  |selftest:)' | sed 's/^  /    /'; \
+	 case "$$out" in *"selftest: ok"*) ;; *) echo "  selftest FAILED"; exit 1 ;; esac
 
 preview: shell
 	@mkdir -p ../preview/out

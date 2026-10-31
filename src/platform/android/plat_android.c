@@ -400,7 +400,6 @@ int shell_file_write(const char *name, const char *data, int len) {
     return n;
 }
 
-void shell_launch_game(void) { /* the platform starts the engine in its own loop */ }
 void shell_exit_app(void) { want_exit = 1; }
 const char *shell_build_version(void) { return "V1.0  ANDROID"; }
 
@@ -808,7 +807,13 @@ void android_main(struct android_app *app) {
             shell_frame((float)steps / 60.0f);
             if (esurf != EGL_NO_SURFACE) eglSwapBuffers(edpy, esurf);
             ticks++;
-            if (shell_take_launch()) engine_start();
+            if (shell_take_launch()) {
+                /* draw the "starting" frame the launcher prepared, so PLAY has visible feedback
+                 * before game_init() blocks the loop for a few seconds */
+                shell_frame(1.0f / 60.0f);
+                if (esurf != EGL_NO_SURFACE) eglSwapBuffers(edpy, esurf);
+                engine_start();
+            }
         } else {
             if (!engine_ready) {
                 engine_start();

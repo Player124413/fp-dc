@@ -11,7 +11,7 @@
 #define SETTINGS_FILE "port.txt"
 
 static int s_screen = SCREEN_HOME;
-static int s_in_game, s_editor, s_launch, s_exit;
+static int s_in_game, s_editor, s_launch, s_exit, s_starting;
 static int s_ticks;
 static int s_w = 1280, s_h = 720;
 static float s_dp = 2.0f;
@@ -41,7 +41,7 @@ void shell_init(void) {
 
 void shell_reset(void) {
     s_screen = SCREEN_HOME;
-    s_in_game = s_editor = s_launch = s_exit = 0;
+    s_in_game = s_editor = s_launch = s_exit = s_starting = 0;
     s_ticks = 0;
     s_fps = 0;
     s_dirty = 0;
@@ -58,12 +58,16 @@ void shell_save(void) {
 }
 
 int shell_get_int(const char *key, int def) { return cfg_int(key, def); }
+/* Write a setting. The "did it change" test must not be cfg_int(key, v) != v: for a key that is not
+ * in the file yet that returns the default, which *is* v, so the first change of every setting was
+ * dropped -- and stayed dropped, because the key never got written. That is why rows like RENDER MODE
+ * or SCANLINES did nothing on a fresh install while the touch-layout rows (which save directly) worked. */
 void shell_set_int(const char *key, int v) {
-    if (cfg_int(key, v) != v) { cfg_set_int(key, v); s_dirty = 0.35f; }
+    if (!cfg_has(key) || cfg_int(key, v) != v) { cfg_set_int(key, v); s_dirty = 0.35f; }
 }
 float shell_get_float(const char *key, float def) { return cfg_float(key, def); }
 void shell_set_float(const char *key, float v) {
-    if (cfg_float(key, v) != v) { cfg_set_float(key, v); s_dirty = 0.35f; }
+    if (!cfg_has(key) || cfg_float(key, v) != v) { cfg_set_float(key, v); s_dirty = 0.35f; }
 }
 
 int shell_screen(void) { return s_screen; }
@@ -91,10 +95,21 @@ void shell_editor_open(int on) {
 
 void shell_set_in_game(int on) {
     s_in_game = on ? 1 : 0;
+    s_starting = 0;
     if (!s_in_game) { s_editor = 0; s_screen = SCREEN_HOME; }
     touch_cancel();
     w_release_all();
 }
+
+/* PLAY: the platform's loop starts the engine (plat_android.c). This used to be an empty stub, so
+ * the button did nothing at all -- the one click the launcher exists for. */
+void shell_launch_game(void) {
+    s_launch = 1;
+    s_starting = 1;                  /* the launcher says so while game_init() runs (seconds) */
+    shell_log("shell: PLAY");
+}
+
+int shell_starting(void) { return s_starting; }
 
 int shell_take_launch(void) { int v = s_launch; s_launch = 0; return v; }
 int shell_take_exit(void) { int v = s_exit; s_exit = 0; return v; }

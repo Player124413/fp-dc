@@ -16,6 +16,15 @@
 
 enum { SCREEN_HOME = 0, SCREEN_SETTINGS, SCREEN_CONTROLS, SCREEN_ABOUT, SCREEN_DATA, SCREEN_N };
 
+/* Widget ids of the launcher screens: small integers, unique per screen (the widget table holds 128).
+ * The host selftest taps them by id, so they live here rather than in launcher.c. */
+enum {
+    ID_HOME = 0,        /* +0 PLAY, +1 CONTROLS, +2 SETTINGS, +3 ABOUT */
+    ID_SET = 10,        /* +0 BACK, +10..+12 tabs, +20.. PICTURE, +30.. INPUT, +40.. SYSTEM */
+    ID_ABOUT = 60,      /* +1 SHARE LOG FILE */
+    ID_DATA = 70        /* +0 IMPORT */
+};
+
 /* ---------------------------------------------------------------- platform services */
 void  shell_log(const char *fmt, ...);
 void  shell_vibrate(int ms, int amplitude);          /* amplitude 1..255 (0 = the device default) */
@@ -28,6 +37,7 @@ const char *shell_data_import_message(void);         /* what to show while/after
 int   shell_file_read(const char *name, char *buf, int cap);
 int   shell_file_write(const char *name, const char *data, int len);
 void  shell_launch_game(void);                       /* leave the shell, start the engine */
+int   shell_starting(void);                          /* the engine is loading: say so */
 void  shell_exit_app(void);
 const char *shell_build_version(void);
 /* device facts for the ABOUT / data screens (filled by the platform, may be empty) */

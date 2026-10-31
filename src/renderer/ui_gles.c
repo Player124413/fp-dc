@@ -195,9 +195,16 @@ static void flush_sdf(void) {
     nsq = 0;
 }
 
+/* at ui_end only one of the two can be pending (each emitter flushes the other), so the order here
+ * never matters; ui_clear uses it too, and there nothing is drawn after it. */
 static void flush_all(void) { flush_flat(); flush_sdf(); }
 
 static void flat_quad(float x0, float y0, float x1, float y1, uint32_t c0, uint32_t c1) {
+    /* Draw order *is* the layering: the two batches are separate programs, so a batch that is still
+     * pending has to go out before this one starts. Without this the SDF batch (every rounded panel
+     * and button fill) was drawn after all the flat geometry (all the text), and the labels of every
+     * button disappeared under its own background. */
+    if (nsq) flush_sdf();
     if (nfq >= UIQ) flush_flat();
     fvtx_t *v = &fv[nfq * 4];
     uint32_t cols[4] = { c0, c0, c1, c1 };
@@ -214,6 +221,7 @@ static void flat_quad(float x0, float y0, float x1, float y1, uint32_t c0, uint3
 }
 
 static void sdf_quad(float cx, float cy, float hw, float hh, float rad, float th, int shape, uint32_t c0, uint32_t c1) {
+    if (nfq) flush_flat();                 /* the flat geometry drawn so far stays under this shape */
     if (nsq >= SDF_MAX) flush_sdf();
     float x0 = cx - hw - 1, y0 = cy - hh - 1, x1 = cx + hw + 1, y1 = cy + hh + 1;
     if (shape == 2) { x0 = cx - hw - th - 1; x1 = cx + hw + th + 1; y0 = cy - hw - th - 1; y1 = cy + hw + th + 1; }

@@ -14,6 +14,7 @@
 #include <string.h>
 #include "../../src/platform/android/ui.h"
 #include "../../src/platform/android/shell.h"
+#include "../../src/platform/android/widgets.h"
 
 uint32_t *soft_fb(void);
 int soft_dump_ppm(const char *path);
@@ -145,6 +146,140 @@ static void scenario_editor_touch(void) {
     }
 }
 
+/* ------------------------------------------------------------------ selftest
+ * The screens are drawn and hit-tested by the same code the APK runs, so a tap can be simulated
+ * here: find a widget by its id on the frame that was just drawn, put a finger on it, and check that
+ * something happened.  This is the test that would have caught PLAY being wired to an empty stub. */
+static int failures;
+
+static void expect(int cond, const char *what) {
+    printf("  %-52s %s\n", what, cond ? "ok" : "FAILED");
+    if (!cond) failures++;
+}
+
+/* the box and centre of the widget with this id, in the frame that was drawn last */
+static int find_box(int id, float *bx0, float *by0, float *bx1, float *by1) {
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+    for (float y = 0; y < (float)stub_screen_h(); y += 3.0f)
+        for (float x = 0; x < (float)stub_screen_w(); x += 3.0f)
+            if (w_hit_test(x, y) == id) {
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                if (y < y0) y0 = y;
+                if (y > y1) y1 = y;
+            }
+    if (x1 < x0) return 0;
+    if (bx0) *bx0 = x0;
+    if (by0) *by0 = y0;
+    if (bx1) *bx1 = x1;
+    if (by1) *by1 = y1;
+    return 1;
+}
+
+static int find_widget(int id, float *cx, float *cy) {
+    float x0, y0, x1, y1;
+    if (!find_box(id, &x0, &y0, &x1, &y1)) return 0;
+    *cx = (x0 + x1) * 0.5f;
+    *cy = (y0 + y1) * 0.5f;
+    return 1;
+}
+
+static void tap_widget(int id, const char *what) {
+    float x = 0, y = 0;
+    if (!find_widget(id, &x, &y)) {
+        expect(0, what);
+        return;
+    }
+    shell_touch(0, 99, x, y);
+    shell_touch(2, 99, x, y);
+    shell_frame(1.0f / 60.0f);                  /* the click is consumed while the screen draws */
+}
+
+static void scenario_selftest(void) {
+    printf("selftest\n");
+    scenario_begin();                            /* HOME */
+    shell_frame(1.0f / 60.0f);                   /* record the widgets */
+
+    /* PLAY: the one click the launcher exists for */
+    expect(!stub_launched(), "nothing launched yet");
+    tap_widget(0, "PLAY is on screen");
+    expect(stub_launched(), "PLAY asks the platform to start the game");
+    expect(shell_starting(), "and the launcher says STARTING while it loads");
+    frame_no = 0;
+    shell_frame(1.0f / 60.0f);                 /* the frame the phone shows before game_init() */
+    dump("starting");
+
+    /* the other home buttons open their screens */
+    scenario_begin();
+    shell_frame(1.0f / 60.0f);
+    tap_widget(1, "CONTROLS is on screen");
+    expect(shell_screen() == SCREEN_CONTROLS, "CONTROLS opens the control editor");
+
+    scenario_begin();
+    shell_frame(1.0f / 60.0f);
+    tap_widget(3, "ABOUT is on screen");
+    expect(shell_screen() == SCREEN_ABOUT, "ABOUT opens the about screen");
+
+    scenario_begin();
+    shell_frame(1.0f / 60.0f);
+    tap_widget(2, "SETTINGS is on screen");
+    expect(shell_screen() == SCREEN_SETTINGS, "SETTINGS opens the settings screen");
+
+    /* PICTURE tab: a choice row changes the value it shows */
+    {
+        int before = shell_get_int("render.mode", 0);
+        shell_frame(1.0f / 60.0f);
+        tap_widget(ID_SET + 20, "the RENDER MODE row is on screen");
+        expect(shell_get_int("render.mode", 0) != before, "tapping RENDER MODE changes it");
+    }
+
+    /* the INPUT tab: switching tabs must really switch the rows */
+    {
+        float x, y;
+        shell_frame(1.0f / 60.0f);
+        tap_widget(ID_SET + 11, "the INPUT tab is on screen");
+        shell_frame(1.0f / 60.0f);
+        expect(find_widget(ID_SET + 30, &x, &y), "the INPUT tab shows MOVEMENT");
+        expect(!find_widget(ID_SET + 20, &x, &y), "and hides the PICTURE rows");
+    }
+
+    /* INPUT tab: a switch flips */
+    {
+        int before = touch_layout()->stick;
+        shell_frame(1.0f / 60.0f);
+        tap_widget(ID_SET + 30, "the MOVEMENT row is on screen");
+        expect(touch_layout()->stick != before, "tapping MOVEMENT flips D-PAD / STICK");
+    }
+
+    /* INPUT tab: a tap on a slider track moves the value (no drag needed) */
+    {
+        int before = touch_layout()->alpha;
+        float x0, y0, x1, y1;
+        shell_frame(1.0f / 60.0f);
+        if (find_box(ID_SET + 34, &x0, &y0, &x1, &y1)) {
+            float px = x0 + (x1 - x0) * 0.9f, py = (y0 + y1) * 0.5f;   /* near the right end: full */
+            shell_touch(0, 98, px, py);
+            shell_frame(1.0f / 60.0f);
+            shell_touch(2, 98, px, py);
+            shell_frame(1.0f / 60.0f);
+            expect(touch_layout()->alpha != before, "tapping PAD OPACITY changes it");
+        } else {
+            expect(0, "the PAD OPACITY slider is on screen");
+        }
+    }
+
+    /* the data screen: IMPORT is a button, not decoration */
+    scenario_begin();
+    shell_open(SCREEN_DATA);
+    shell_frame(1.0f / 60.0f);
+    {
+        float x, y;
+        expect(find_widget(ID_DATA + 0, &x, &y), "IMPORT GAME DATA is on screen");
+    }
+
+    printf("selftest: %s\n", failures ? "FAILED" : "ok");
+}
+
 static void scenario_ingame(void) {
     scenario_begin();
     shell_set_in_game(1);
@@ -195,7 +330,7 @@ int main(int argc, char **argv) {
     struct { const char *name; void (*fn)(void); } sc[] = {
         { "font", scenario_font },       { "home", scenario_home },     { "settings", scenario_settings },
         { "controls", scenario_controls }, { "editorkit", scenario_editor_touch }, { "ingame", scenario_ingame },
-        { "pressed", scenario_pressed }, { "data", scenario_data },
+        { "pressed", scenario_pressed }, { "data", scenario_data },       { "selftest", scenario_selftest },
     };
     int any = 0, all = argc == 2;
     for (int i = 2; i < argc; i++) if (!strcmp(argv[i], "all")) all = 1;
@@ -207,5 +342,5 @@ int main(int argc, char **argv) {
         any = 1;
     }
     if (!any) { fprintf(stderr, "no known scenario\n"); return 2; }
-    return 0;
+    return failures ? 1 : 0;                  /* the selftest decides the exit status */
 }

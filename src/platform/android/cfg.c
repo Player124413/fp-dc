@@ -40,6 +40,8 @@ static void set(const char *key, const char *val) {
     snprintf(ent[i].val, sizeof ent[i].val, "%s", val ? val : "");
 }
 
+int cfg_has(const char *key) { return key && find(key) >= 0; }
+
 int cfg_int(const char *key, int def) {
     int i = find(key);
     if (i < 0 || !ent[i].val[0]) return def;
