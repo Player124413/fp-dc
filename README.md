@@ -66,10 +66,13 @@ Something wrong on the phone? The port writes `fpdc.log` next to its data
 (`/sdcard/Android/data/com.fpdc.port/files/`) and **ABOUT -> SHARE LOG FILE** in the launcher sends it
 anywhere. The Dreamcast side of the same data conversion is a workflow too:
 **[Convert game data](.github/workflows/convert.yml)** takes a download link to your archive and gives back
-`fpdc.cdi` or `fpdc-data.zip`. Two ways to start it: **Actions -> Convert game data -> Run workflow** (paste the
-link), or edit [`.convert/request.txt`](.convert/request.txt) in the browser and save -- the push starts the
-conversion, which also works before this branch reaches `master` (GitHub only offers *Run workflow* for
-workflows that exist on the default branch).
+`fpdc.cdi` (needs a link to the Dreamcast program `fpdc.elf`; without one it packs the converted data as
+`fpdc-dc-data.zip`) or `fpdc-data.zip` for the phone. Two ways to start it: **Actions -> Convert game data ->
+Run workflow** (paste the link), or edit [`.convert/request.txt`](.convert/request.txt) in the browser and save --
+the push starts the conversion, which also works before this branch reaches `master` (GitHub only offers *Run
+workflow* for workflows that exist on the default branch). The runner installs what the converter needs
+(ffmpeg, pillow, lz4) and builds the CDI writer itself; a failure at the disc stage still leaves the converted
+data in the artifact.
 
 Host-side checks (no NDK, no device): `make -C tools/android check` -- syntax-checks the GLES backends against
 stub NDK headers, verifies the Dreamcast texture twiddle against `tools/twiddle_disc.py`, and renders every

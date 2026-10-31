@@ -6,9 +6,14 @@
 #
 # url:    a direct link to the archive -- a zip or 7z holding Assets.dat, or Assets.dat itself.
 #         A Google Drive "share" link works too.
-# target: dc (fpdc.cdi) or android (fpdc-data.zip) or data (the folder, for debugging)
+# target: android (fpdc-data.zip, the package the launcher imports)
+#         dc      (fpdc.cdi) -- needs elf:, see below; without it the converted data is packed instead
+#         data    (the converted folder on its own, for debugging the converter)
 # name:   optional, lands in the artifact's file name
+# elf:    optional, a direct link to fpdc.elf (the Dreamcast program). Only a disc image needs it:
+#         without it the dc target converts the data and packs it as fpdc-dc-data.zip.
 
 url:
-target: dc
+target: android
 name: freedom-planet
+elf:

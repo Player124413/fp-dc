@@ -1,7 +1,8 @@
 name: Convert game data
 
 # Turns a game data archive into something the ports can use, without a PC setup:
-#   * "dc"      -> fpdc.cdi, a Dreamcast disc image (burn it, or open it in Flycast/Redream)
+#   * "dc"      -> fpdc.cdi, a Dreamcast disc image (needs the Dreamcast program, see below), else the
+#                  converted data as fpdc-dc-data.zip
 #   * "android" -> fpdc-data.zip, the package the launcher imports (IMPORT GAME DATA)
 #   * "data"    -> the converted data folder on its own (for debugging the converter)
 #
@@ -34,6 +35,11 @@ on:
         required: false
         default: ''
         type: string
+      elf_url:
+        description: 'Optional: a direct link to fpdc.elf to build a disc image with (else the data only)'
+        required: false
+        default: ''
+        type: string
   push:
     paths:
       - '.convert/request.txt'
@@ -46,7 +52,7 @@ jobs:
   convert:
     name: Convert
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -55,15 +61,17 @@ jobs:
           IN_URL: ${{ inputs.url }}
           IN_TARGET: ${{ inputs.target }}
           IN_LABEL: ${{ inputs.name }}
+          IN_ELF: ${{ inputs.elf_url }}
         run: |
           set -o pipefail
           # a dispatch carries the inputs; a push carries them in .convert/request.txt
           cfg=.convert/request.txt
           get() { [ -f "$cfg" ] && sed -n "s/^[[:space:]]*$1[[:space:]]*:[[:space:]]*//p" "$cfg" | head -1; }
-          url="$IN_URL"; target="$IN_TARGET"; label="$IN_LABEL"
+          url="$IN_URL"; target="$IN_TARGET"; label="$IN_LABEL"; elf="$IN_ELF"
           [ -n "$url" ] || url="$(get url)"
           [ -n "$target" ] || target="$(get target)"
           [ -n "$label" ] || label="$(get name)"
+          [ -n "$elf" ] || elf="$(get elf)"
           target="${target:-dc}"
           case "$target" in dc|android|data) ;; *) echo "::error::target must be dc, android or data (got '$target')"; exit 1 ;; esac
           if [ -z "$url" ]; then
@@ -75,15 +83,17 @@ jobs:
           echo "url: $url"
           echo "target: $target"
           echo "label: ${label:-<run number>}"
+          echo "fpdc.elf: ${elf:-<none: the data only>}"
           {
             echo "URL=$url"
             echo "TARGET=$target"
             echo "LABEL=$label"
+            echo "ELF=$elf"
           } >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Download the archive
         if: env.SKIP != '1'
@@ -132,56 +142,106 @@ jobs:
             exit 1
           fi
           echo "Assets.dat: $found ($(du -h "$found" | cut -f1))"
-          echo "ASSETS=$found" >> $GITHUB_ENV
+          echo "ASSETS=$found" >> "$GITHUB_ENV"
+
+      - name: Tools the converter needs
+        if: env.SKIP != '1'
+        run: |
+          set -o pipefail
+          # The builder's own pinned downloads are not published any more, so give it what it can use
+          # locally: ffmpeg and cc from the runner, the Python packages from PyPI.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg zip build-essential
+          python3 -m pip install --quiet --disable-pip-version-check pillow lz4
+          python3 -c "import PIL, lz4; print('pillow', PIL.__version__, 'lz4', lz4.__version__)"
+          ffmpeg -hide_banner -version | head -1
+          cc --version | head -1
+          mkdir -p out work
+          if [ -n "$ELF" ]; then
+            echo "downloading the Dreamcast program"
+            if curl -L --retry 3 --fail --max-time 1800 -o work/fpdc.elf "$ELF"; then
+              ls -la work/fpdc.elf
+            else
+              echo "::warning::could not download $ELF -- the disc image is skipped, the data is converted"
+              rm -f work/fpdc.elf
+            fi
+            # the CDI writer is not in this checkout: build it (libisofs + meson). Not fatal: without it
+            # the disc image is skipped and the converted data is uploaded instead.
+            if sudo apt-get install -y -qq meson ninja-build libisofs-dev g++ 2>/dev/null &&
+               git clone --depth 1 -q https://github.com/Mark65537/mkdcdisc /tmp/mkdcdisc &&
+               meson setup /tmp/mkdcdisc/build /tmp/mkdcdisc > /dev/null 2>&1 &&
+               ninja -C /tmp/mkdcdisc/build > /dev/null 2>&1; then
+              mk=$(find /tmp/mkdcdisc/build -name 'mkdcdisc' -type f -perm -u+x | head -1)
+              echo "MKDCDISC=$mk" >> "$GITHUB_ENV"
+              echo "mkdcdisc: $mk"
+            else
+              echo "::warning::mkdcdisc could not be built -- no disc image this run"
+            fi
+          fi
 
       - name: Convert
         if: env.SKIP != '1'
         run: |
           set -o pipefail
-          mkdir -p out work
-          args="--out out/data --work work"
+          args="--out out/data --work work --local-tools"
           case "$TARGET" in
-            dc)      args="$args --cdi out/fpdc.cdi" ;;
-            android) args="$args --zip out/fpdc-data.zip" ;;
-            data)    ;;
+            dc)
+              if [ -s work/fpdc.elf ] && [ -n "${MKDCDISC:-}" ]; then
+                run_target=dc; args="$args --cdi out/fpdc.cdi --elf work/fpdc.elf"
+              else
+                echo "::warning::no Dreamcast program or no CDI writer this run: converting the data only"
+                run_target=data
+              fi
+              ;;
+            android) run_target=android; args="$args --zip out/fpdc-data.zip" ;;
+            data)    run_target=data ;;
           esac
-          echo "python3 tools/builder/fpbuild.py $args $TARGET $ASSETS"
-          python3 tools/builder/fpbuild.py $args "$TARGET" "$ASSETS" 2>&1 | tee /tmp/convert.log
+          echo "python3 tools/builder/fpbuild.py $args $run_target $ASSETS"
+          python3 tools/builder/fpbuild.py $args "$run_target" "$ASSETS" 2>&1 | tee /tmp/convert.log
           echo "----- what came out -----"
-          ls -la out
-          find out -maxdepth 1 -type f -size +1M -printf '%f %s bytes\n' || true
+          ls -la out 2>/dev/null || true
+          du -sh out/* 2>/dev/null || true
+
+      - name: Pack the converted data when there is no disc image
+        if: env.SKIP != '1' && always()
+        run: |
+          set -o pipefail
+          if [ ! -f out/fpdc.cdi ] && [ ! -f out/fpdc-data.zip ] && [ -d out/data ] && [ -n "$(ls -A out/data 2>/dev/null)" ]; then
+            echo "no disc image or package: zipping the data folder"
+            ( cd out/data && zip -q -r -0 ../fpdc-dc-data.zip . )
+            ls -la out/fpdc-dc-data.zip
+          fi
 
       - name: Report
         if: failure()
         run: |
-          if [ -f /tmp/convert.log ]; then
-            grep -E "FAIL|Error|error|Traceback|missing|not found|cannot" /tmp/convert.log \
-              | head -20 | cut -c1-300 | while IFS= read -r l; do echo "::error::$l"; done
-            echo "----- the last lines -----"
-            tail -15 /tmp/convert.log | cut -c1-300 | while IFS= read -r l; do echo "::error::tail: $l"; done
-          fi
+          [ -f /tmp/convert.log ] || exit 0
+          grep -E "FAIL|Error|error|Traceback|missing|not found|cannot|ERROR" /tmp/convert.log \
+            | head -20 | cut -c1-300 | while IFS= read -r l; do echo "::error::$l"; done
+          echo "----- the last lines -----"
+          tail -15 /tmp/convert.log | cut -c1-300 | while IFS= read -r l; do echo "::error::tail: $l"; done
 
       - name: Name the result
-        if: env.SKIP != '1' && success()
+        if: env.SKIP != '1' && always()
         run: |
-          set -e
+          set -o pipefail
           tag=$(printf '%s' "${LABEL:-run-${GITHUB_RUN_NUMBER}}" | tr -c 'A-Za-z0-9._-' '_')
-          case "$TARGET" in
-            dc)      src=out/fpdc.cdi;          dst="out/fpdc-$tag.cdi";        [ -f "$src" ] || dst="" ;;
-            android) src=out/fpdc-data.zip;     dst="out/fpdc-data-$tag.zip";   [ -f "$src" ] || dst="" ;;
-            data)    src=out/data;              dst="" ;;
-          esac
-          if [ -n "${dst:-}" ]; then mv "$src" "$dst"; fi
+          for pair in "out/fpdc.cdi:out/fpdc-$tag.cdi" \
+                      "out/fpdc-data.zip:out/fpdc-data-$tag.zip" \
+                      "out/fpdc-dc-data.zip:out/fpdc-dc-data-$tag.zip"; do
+            src=${pair%%:*}; dst=${pair#*:}
+            [ -f "$src" ] && mv "$src" "$dst" && echo "$dst"
+          done
           ls -la out
-          du -sh out/* 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
-        if: env.SKIP != '1' && success()
+        if: env.SKIP != '1' && always()
         with:
           name: fpdc-${{ env.TARGET }}
           path: |
             out/fpdc-*.cdi
             out/fpdc-data-*.zip
+            out/fpdc-dc-data-*.zip
             out/data
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
