@@ -9,6 +9,6 @@
 # target: dc (fpdc.cdi) or android (fpdc-data.zip) or data (the folder, for debugging)
 # name:   optional, lands in the artifact's file name
 
-url: https://codeload.github.com/Player124413/fp-dc/zip/refs/heads/master
+url:
 target: dc
-name: plumbing-test
+name: freedom-planet
