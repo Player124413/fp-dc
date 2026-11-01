@@ -114,9 +114,9 @@ void camera_shake(int z) { float n = G.cam.Z + z; G.cam.Z = n < z ? n : (float)z
 static void level_free(void) {   /* everything of the level except Lilac's banks */
     tex_drop(&G.objs.tex); if (G.objs.tex2.w > 0) tex_drop(&G.objs.tex2); bank_free(&G.objs);
     if (G.ens.nframes) { tex_drop(&G.ens.tex); if (G.ens.tex2.w > 0) tex_drop(&G.ens.tex2); bank_free(&G.ens); }
-    memset(&G.ens, 0, sizeof G.ens); G.ens.tex.id = -1;
+    memset(&G.ens, 0, sizeof G.ens); G.ens.tex.id = G.ens.tex2.id = -1;
     if (G.shl.nframes) { tex_drop(&G.shl.tex); bank_free(&G.shl); }
-    memset(&G.shl, 0, sizeof G.shl); G.shl.tex.id = -1;
+    memset(&G.shl, 0, sizeof G.shl); G.shl.tex.id = G.shl.tex2.id = -1;
     for (int i = 0; i < G.lvl.natlas && i < MAX_ATLAS; i++) tex_drop(&G.lvl.atlas[i]);
     for (int i = 0; i < G.npar; i++) tex_drop(&G.par[i]);
     par_free();
@@ -180,7 +180,7 @@ int game_load_level(const char *dir) {
         chr_resident_who = who;
     }
     snprintf(nm, sizeof nm, "%s/%s_obj", dir, dir); bad |= bank_load(&G.objs, nm) < 0;
-    snprintf(nm, sizeof nm, "%s/%s_ens", dir, dir); if (bank_load(&G.ens, nm) < 0) { memset(&G.ens, 0, sizeof G.ens); G.ens.tex.id = -1; }
+    snprintf(nm, sizeof nm, "%s/%s_ens", dir, dir); if (bank_load(&G.ens, nm) < 0) { memset(&G.ens, 0, sizeof G.ens); G.ens.tex.id = G.ens.tex2.id = -1; }
     snprintf(nm, sizeof nm, "%s/%s", dir, dir); bad |= level_load(&G.lvl, nm) < 0;
     if (bad) { loading_end(); lp_end(); plat_log("level %s: data load failed\n", dir); return -1; }
     par_load(dir);                                 /* layer-0 parallax (src/game/parallax.c) */

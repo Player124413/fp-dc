@@ -13,7 +13,7 @@ int tex_load_file(tex_t *t, const char *name) {
     size_t sz; char fn[64];
     snprintf(fn, sizeof fn, "%s.tex", name);
     void *d = plat_load_file(fn, &sz);
-    if (!d) return -1;
+    if (!d) { plat_log("tex %s: missing\n", fn); return -1; }
     uint64_t tu = plat_time_us();
     int r = r_tex_load(t, d, sz);
     LP.upload_us += plat_time_us() - tu; LP.ntex++; LP.tex_bytes += sz;
@@ -55,11 +55,13 @@ static unsigned bank_gen = 1;                       /* bank loads so far (bank_a
 int bank_load(bank_t *b, const char *name) {
     bank_gen++;                                       /* invalidates the bank_anim cache */
     char fn[64]; size_t sz;
-    memset(b, 0, sizeof *b); b->tex2.id = -1;
+    /* Dead handles, not 0: 0 is a real texture-table slot, and a failed bank used to draw every one of its
+     * sprites with whatever atlas happened to sit in slot 0 (stretched garbage or nothing at all). */
+    memset(b, 0, sizeof *b); b->tex.id = -1; b->tex2.id = -1;
     if (tex_load_file(&b->tex, name) < 0) return -1;
     snprintf(fn, sizeof fn, "%s.spr", name);
     uint8_t *d = plat_load_file(fn, &sz);
-    if (!d) return -1;
+    if (!d) { plat_log("bank %s: no %s\n", name, fn); if (b->tex.id >= 0) r_tex_free(&b->tex); b->tex.id = -1; return -1; }
     if (sz < 12 || memcmp(d, "FPS2", 4)) goto bad;
     b->nframes = rd16(d + 4); b->nanims = rd16(d + 6);
     size_t need = 12 + (size_t)b->nframes * 12 + (size_t)b->nanims * 24;
@@ -74,7 +76,10 @@ int bank_load(bank_t *b, const char *name) {
         if (f->v & 0x8000) {                       /* second atlas */
             if (b->tex2.id < 0 && b->tex2.w == 0) { char n2[64]; snprintf(n2, sizeof n2, "%s_2", name); if (tex_load_file(&b->tex2, n2) < 0) { b->tex2.id = -1; goto bad; } }
             if (f->u + f->w > b->tex2.w || (f->v & 0x7fff) + f->h > b->tex2.h) goto bad;
-        } else if (f->u + f->w > b->tex.w || f->v + f->h > b->tex.h) goto bad;
+        } else if (f->u + f->w > b->tex.w || f->v + f->h > b->tex.h) {
+            plat_log("bank %s: frame %d (%d,%d %dx%d) outside its %dx%d atlas\n", name, i, f->u, f->v, f->w, f->h, b->tex.w, b->tex.h);
+            goto bad;
+        }
     }
     int total = 0;
     for (int i = 0; i < b->nanims; i++, p += 24) {
@@ -114,7 +119,14 @@ int bank_load(bank_t *b, const char *name) {
     free(d);
     return 0;
 bad:
+    /* A broken bank used to keep its uploaded atlas forever: the caller zeroed the bank, the slot was never
+     * freed, and after enough attempts the texture table filled up and NEW banks (a boss, an enemy) loaded
+     * nothing at all - sprites that "disappear" after a while of play. Give the memory back. */
     plat_log("bank %s: invalid file\n", name);
+    if (b->tex.id >= 0) r_tex_free(&b->tex);
+    if (b->tex2.id >= 0) r_tex_free(&b->tex2);
+    free(b->frames); free(b->anims); free(b->seq); free(b->act); free(b->mbits); free(b->moff); free(b->fbox);
+    memset(b, 0, sizeof *b); b->tex.id = -1; b->tex2.id = -1;
     free(d);
     return -1;
 }

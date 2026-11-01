@@ -12,7 +12,7 @@ STUB := ndkstub
 SYNTAX := -fsyntax-only -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Werror=implicit-function-declaration -I$(STUB)
 
 ANDROID_SRC := $(ROOT)/src/renderer/render_gles.c $(ROOT)/src/renderer/ui_gles.c \
-               $(ROOT)/src/renderer/twiddle.c \
+               $(ROOT)/src/renderer/twiddle.c $(ROOT)/src/resources/assets.c \
                $(ROOT)/src/platform/android/plat_android.c $(ROOT)/src/platform/android/snd_android.c
 
 .PHONY: check syntax twiddle font colour uiorder present audio shell selftest preview

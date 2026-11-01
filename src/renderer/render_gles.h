@@ -13,6 +13,8 @@ enum {
 int  rgl_init(void);                       /* needs a current GLES3 context and a window size */
 void rgl_resize(int w, int h);             /* window pixels (surface changed / rotation) */
 int  rgl_quad_count(void);                 /* geometry the last drawn frame pushed (0 = a bare clear) */
+uint32_t rgl_sprite_skips(void);            /* sprites dropped for a dead texture handle (0 = none) */
+int  rgl_tex_slots(void);                  /* texture-table slots in use (MAXTEX is the ceiling) */
 void rgl_present(void);                    /* after r_end(): FBO upscale, scanlines, swap is the platform's */
 void rgl_shutdown(void);
 /* presentation settings, read from port.txt by the platform every frame (cheap, idempotent) */

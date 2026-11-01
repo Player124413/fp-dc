@@ -29,7 +29,8 @@
 #include "../platform/android/ui.h"   /* ui_gles_init(): the shell UI shares the GL context */
 #include <math.h>
 
-#define MAXTEX 192
+#define MAXTEX 512                          /* phone VRAM is not the Dreamcast's 8 MB: a level needs ~70, and a
+                                               long session used to run out at 192 and silently lose its sprites */
 #define MAXQUAD 2048                       /* quads per batch (8192 vertices, fits 16-bit indices) */
 #define VIEW_W 426                         /* the logical view (SCREEN_W unless FP_VIEW_320) */
 #define VIEW_H 240
@@ -76,6 +77,8 @@ static float rscale = 1.f, rxscale = 1.f;
 static int invert_on;
 static int add_on;                 /* r_set_additive: the elemental shields and other glow sprites */
 uint32_t r_stat_polys;
+uint32_t rgl_skips;                        /* sprites dropped for a dead texture handle (see sprite_skip) */
+static int rgl_skip_logged;
 
 /* ------------------------------------------------------------------ shaders */
 static const char *VS_WORLD =
@@ -277,6 +280,8 @@ void rgl_shutdown(void) {
 int rgl_window_w(void) { return win_w; }
 int rgl_window_h(void) { return win_h; }
 int rgl_vram_kb(void) { return vtex_kb; }
+uint32_t rgl_sprite_skips(void) { return rgl_skips; }
+int rgl_tex_slots(void) { return ntex; }
 
 static void fbo_make(int w, int h) {
     if (fbo_tex) glDeleteTextures(1, &fbo_tex);
@@ -441,16 +446,23 @@ static void tex_params(int linear) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
+/* A texture that failed to load leaves a DEAD handle (id -1). It used to leave whatever was there - 0 after
+ * a memset - and 0 is a real table slot, so the game drew the sprite with somebody else's atlas: stretched
+ * garbage, or nothing at all when that atlas was transparent there. Every early return now goes through
+ * here, and every reason is logged: "sprites missing" reports had no trace at all before. */
 int r_tex_load(tex_t *t, const void *data, size_t size) {
     const uint8_t *d = data;
     uint16_t hdr[6];
-    if (size < 16 || memcmp(d, "FPTX", 4)) return -1;
+    int w = 0, h = 0, fmt = -1, grp = 0;
+    t->id = -1; t->w = t->h = t->srcw = t->srch = 0;
+    if (size < 16 || memcmp(d, "FPTX", 4)) { plat_log("gles: texture not FPTX (%zu bytes)\n", size); return -1; }
     memcpy(hdr, d + 4, 12);
-    int w = hdr[0], h = hdr[1], fmt = hdr[2], grp = hdr[5];
+    w = hdr[0]; h = hdr[1]; fmt = hdr[2]; grp = hdr[5];
     const uint8_t *src = d + 16;
-    if (w < 8 || h < 8 || (w & (w - 1)) || (h & (h - 1))) return -1;
+    if (w < 8 || h < 8 || (w & (w - 1)) || (h & (h - 1))) { plat_log("gles: texture %dx%d is not power of two\n", w, h); return -1; }
     int slot = tex_slot();
     if (slot < 0) { plat_log("gles: texture table full (%dx%d)\n", w, h); return -1; }
+    if (ntex == MAXTEX * 3 / 4) plat_log("gles: %d of %d texture slots in use\n", ntex, MAXTEX);
     GLuint id;
     glGenTextures(1, &id);
     glBindTexture(GL_TEXTURE_2D, id);
@@ -540,13 +552,25 @@ void r_reset(void) {
     ntex = 0;
 }
 
+/* The palette is what makes a paletted sprite visible at all: its alpha bit is the punch-through, so a
+ * group whose 256 entries all came out transparent draws nothing, however correct the geometry is. That is
+ * a silent, screen-wide "the characters and the enemies are gone" bug, so it is logged, and an all-invisible
+ * group is repaired (entry 0 stays transparent: that is the sprite's own transparent texel). */
 int r_pal_load(const void *data, size_t size) {
     const uint8_t *d = data;
     uint16_t g;
-    if (size < 8 + 512 || memcmp(d, "FPPL", 4)) return -1;
+    if (size < 8 + 512 || memcmp(d, "FPPL", 4)) { plat_log("pal: not FPPL (%zu bytes)\n", size); return -1; }
     memcpy(&g, d + 4, 2);
-    if (g > 3) return -1;
+    if (g > 3) { plat_log("pal: group %u out of range\n", (unsigned)g); return -1; }
     memcpy(pals[g], d + 8, 512);
+    int opaque = 0;
+    for (int i = 0; i < 256; i++) if (pals[g][i] & 0x8000) opaque++;
+    if (!opaque) {
+        for (int i = 1; i < 256; i++) pals[g][i] |= 0x8000;
+        plat_log("pal %u: every entry transparent, forced opaque\n", (unsigned)g);
+        opaque = 255;
+    }
+    plat_log("pal %u: %d of 256 opaque\n", (unsigned)g, opaque);
     palette_upload(g);
     return 0;
 }
@@ -652,9 +676,27 @@ void rgl_present(void) {
 }
 
 
+/* Sprites thrown away because their handle is dead: the first few are logged with the handle and the atlas
+ * size, which is what tells a "the sprite is not drawn at all" report apart from "it is drawn somewhere
+ * else". A long tail of these once meant a leaked texture slot (a failed bank load kept its atlas). */
+static void sprite_skip(const tex_t *t, int uw, int vh) {
+    if (rgl_skip_logged >= 8) return;
+    if (++rgl_skip_logged > 8) return;
+    plat_log("gles: sprite skipped: handle %d, atlas %dx%d, quad %dx%d\n", t->id, t->w, t->h, uw, vh);
+}
+
 void r_sprite(const tex_t *t, int u, int v, int uw, int vh, float x, float y, float w, float h, int flip, uint32_t argb) {
-    if (t->id < 0 || t->id >= ntex || !texs[t->id].id || w <= 0 || h <= 0) return;
+    if (t->id < 0 || t->id >= ntex || !texs[t->id].id || w <= 0 || h <= 0) { rgl_skips++; sprite_skip(t, uw, vh); return; }
     if (x + w < 0 || y + h < 0 || x >= SCREEN_W || y >= SCREEN_H) return;
+    {   /* a frame that claims to be larger than its atlas samples the clamped edge texels and smears a
+         * stripe of them across the sprite (the "the girl has graphics bugs" look): cut it to the atlas */
+        const gtex_t *g = &texs[t->id];
+        if (u < 0) u = 0;
+        if (v < 0) v = 0;
+        if (u + uw > g->w) uw = g->w - u;
+        if (v + vh > g->h) vh = g->h - v;
+        if (uw <= 0 || vh <= 0) return;
+    }
     bind_tex(t);
     set_blend(add_on ? 1 : 0);
     float iw = 1.0f / (float)texs[t->id].w, ih = 1.0f / (float)texs[t->id].h;

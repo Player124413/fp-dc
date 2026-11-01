@@ -160,9 +160,18 @@ actually did:
 
 ```
 frame 300: win 2652x1200 dp 3.25 ui 2652x1200, 812 quads + 63 sdf in 2 calls, glerr 0x0,
-           game (mode 1 lvl dv1 p 1234,300 f 510, game 152 quads), rss 214 MB,
-           snd 6 voices/0 underruns/0 steals m_stage1.adp
+           game (mode 1 lvl dv1 p 1234,300 f 510, game 152 quads, 71 tex slots, 0 sprites skipped),
+           rss 214 MB, snd 6 voices/0 underruns/0 steals m_stage1.adp
 ```
+
+Two numbers there are for "the sprites are missing": **tex slots** is how many texture-table slots are in use
+(the ceiling is 512; a level needs about 70, and a number that keeps climbing for minutes means something is
+loading textures it never frees), and **sprites skipped** counts sprites the renderer refused to draw because
+their texture handle was dead -- a steady count there means a bank failed to load. A failed load is always
+logged now (`tex ...: missing`, `tex ...: invalid`, `gles: texture not FPTX`, `gles: texture WxH is not power
+of two`, `bank ...: frame N (...) outside its ...x... atlas`, `bank ...: invalid file`), and so is a palette
+group that came out fully transparent (`pal 2: every entry transparent, forced opaque`) -- paletted sheets
+draw nothing at all in that case.
 
 The `game (...)` part is the engine's own state: the mode (`0` frontend, `1` a stage, `2` results, `4` ending,
 `5` a story room), the level directory, the player position and the frame counter, then **how many quads the

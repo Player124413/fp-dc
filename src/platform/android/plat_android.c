@@ -1063,9 +1063,11 @@ void android_main(struct android_app *app) {
             char gs[80];
             game_brief(gs, sizeof gs);
             plat_log("frame %u: win %dx%d dp %.2f ui %dx%d, %d quads + %d sdf in %d calls, glerr 0x%x, "
-                     "%s (%s, game %d quads), rss %d MB, snd %d voices/%d underruns/%d steals %s",
+                     "%s (%s, game %d quads, %u tex slots, %u sprites skipped), rss %d MB, "
+                     "snd %d voices/%d underruns/%d steals %s",
                      ticks, win_w, win_h, (double)dp_scale, ui_w(), ui_h(), q, sdf, fl, (unsigned)err,
-                     shell_active() ? "launcher" : "game", gs, rgl_quad_count(), proc_rss_mb(),
+                     shell_active() ? "launcher" : "game", gs, rgl_quad_count(), (unsigned)rgl_tex_slots(),
+                     rgl_sprite_skips(), proc_rss_mb(),
                      snd_active_voices(), snd_underruns(), snd_steals(),
                      music[0] ? (mbase ? mbase + 1 : music) : "-");
         }

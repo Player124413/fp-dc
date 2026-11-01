@@ -67,7 +67,7 @@ static void shl_need(void) {
                                                                              * a carried shield needs no sprites there (VRAM, session 25b) */
     if (sh_anim("shw", &b) >= 0) return;                                     /* the act's _ens has them */
     char nm[48]; snprintf(nm, sizeof nm, "%s/%s_shl", G.lvdir, G.lvdir);
-    if (bank_load(&G.shl, nm) < 0) { memset(&G.shl, 0, sizeof G.shl); G.shl.tex.id = -1; plat_log("shields: no sprites for %s (%s missing)\n", G.lvdir, nm); }
+    if (bank_load(&G.shl, nm) < 0) { memset(&G.shl, 0, sizeof G.shl); G.shl.tex.id = G.shl.tex2.id = -1; plat_log("shields: no sprites for %s (%s missing)\n", G.lvdir, nm); }
 #ifdef FP_HOST_ENV
     else if (getenv("FP_TRACE_SID")) printf("shields: bank %s\n", nm);
 #endif
