@@ -233,6 +233,20 @@ NO PICTURE - REPORT IT (COPY LOG)
 That banner is not a crash: the app is running, the touch pad works, and the engine produced no geometry. The
 log then has a line `!! 60 frames with no geometry: mode ..., lvl ..., p ..., f ...` with the same state.
 
+The heroine is traced too. Every quarter of a second of a new level, and on every draw whose frame rect
+does not fit its atlas, the log gets a line like
+
+```
+player skin: anim "run" frame 2, rect (128,64 41x47) in 512x256, flip 1, rot 0.0
+player hair: anim "h_run" frame 1, rect (0,32 38x22) in 256x128, flip 1, rot 0.0
+```
+
+which is what a report about "the sprite looks wrong" is answered with: the animation and frame she is
+actually in, the rect inside the atlas, and the tilt/flip the draw ran under. A tilt far from 0 here while
+she stands on flat ground is a terrain-angle bug; a rect wider than the atlas is a frame bug. The draw
+also refuses to inherit a squash-and-stretch from a gimmick: it forces the neutral scale first and says so
+in the log (`player: drawn under a leaked scale 2.00 x 1.00, reset`).
+
 A native crash writes a self-contained block into the log before the system takes the process:
 
 ```

@@ -1324,6 +1324,8 @@ void player_update(player_t *p, const input_t *in) {
 /* Every animator here holds a pointer into a bank the engine frees on a level change / restart
  * (G.lilac, G.hair, G.objs). A draw that runs before the next update would read a freed bank: a garbage
  * frame rect, which is drawn as a stretched smear. game_unload_all() drops them. */
+static int draw_trace_left;                /* player draws still to be written into the log */
+
 void player_unload_banks(void) {
     hair.b = NULL;
     psc.b = NULL;
@@ -1331,14 +1333,48 @@ void player_unload_banks(void) {
     spk.on = 0;
     for (int i = 0; i < NPFX; i++) pfx[i].an.b = NULL;
     G.p.an.b = NULL;
+    draw_trace_left = 24;                     /* the first draws of the new level go into the log */
+}
+
+/* What the heroine is actually drawn with. A report about "the sprite looks wrong" cannot be answered
+ * without the numbers: which animation, which frame, the rect in the atlas, the atlas itself, the flip
+ * and the scale the draw runs under. The first draws after a level load are always logged (a smear is
+ * visible right away), then a sample every 240, and every draw whose rect or state looks impossible. */
+static void player_trace(const char *what, const bank_t *b, const animator_t *an, const frame_t *f, int flip, float rot) {
+    static int n;
+    if (!b || !f || !an->b) return;
+    int v; const tex_t *t = bank_frame_tex(b, f, &v);
+    int odd = !f->w || !f->h;
+    if (t && t->w > 0 && (f->u + f->w > t->w || f->v + f->h > t->h || f->w > t->w / 2)) odd = 1;
+    n++;
+    if (draw_trace_left <= 0 && !odd && (n % 240)) return;
+    if (draw_trace_left > 0) draw_trace_left--;
+    const char *nm = (an->anim >= 0 && an->anim < b->nanims) ? b->anims[an->anim].name : "?";
+    plat_log("player %s: anim \"%s\" frame %d, rect (%d,%d %dx%d) in %dx%d, flip %d, rot %.1f\n",
+             what, nm, an->frame, f->u, f->v, f->w, f->h, t ? t->w : 0, t ? t->h : 0, flip, (double)rot);
 }
 
 void player_draw(const player_t *p) {
     if (p->invuln && !p->invinc && !spk.on && (p->invuln & 4) && p->state != ST_HURT) { fx_draw(); return; }   /* invincibility: no blink (INFERRED) */
     if (!p->an.b) { fx_draw(); return; }                 /* the banks were dropped: nothing to draw yet */
     /* the sprite hotspot (= rotation centre) is the movement object's position: p->y - ORIG_REF_DY */
-    if (hair.b && !p->bike) frame_draw_rot(hair.b, anim_frame(&hair), floor(p->x - G.camx), floor(p->y - ORIG_REF_DY - G.camy), p->rot, hair_flip, p->tint > 0 ? (p->tint_argb ? p->tint_argb : 0xff80ff80) : 0xffffffff);
+    /* the heroine is never squash-and-stretched: an x scale set by a gimmick and not put back would
+     * stretch her sideways for the rest of the level (only the rotated draw path honours it), so the
+     * neutral state is forced here and anything that had to be corrected is named in the log */
+    float sc = r_get_scale(), xs = r_get_xscale();
+    if (sc != 1.f || xs != 1.f) {
+        plat_log("player: drawn under a leaked scale %.2f x %.2f, reset\n", (double)sc, (double)xs);
+        r_set_scale(1.f); r_set_xscale(1.f);
+    }
+    r_set_additive(0);
+    r_set_invert(0);
+    if (hair.b && !p->bike) {
+        const frame_t *hf = anim_frame(&hair);
+        player_trace("hair", hair.b, &hair, hf, hair_flip, p->rot);
+        frame_draw_rot(hair.b, hf, floor(p->x - G.camx), floor(p->y - ORIG_REF_DY - G.camy), p->rot, hair_flip, p->tint > 0 ? (p->tint_argb ? p->tint_argb : 0xff80ff80) : 0xffffffff);
+    }
     const frame_t *f = anim_frame(&p->an);
+    player_trace("skin", p->an.b, &p->an, f, draw_flip, p->rot);
     double hxp = p->x, hyp = p->y - ORIG_REF_DY;   /* RE 1517: the skin sits at (int X, int Y) */
     frame_draw_rot(p->an.b, f, floor(hxp - G.camx), floor(hyp - G.camy), p->rot, draw_flip, p->tint > 0 ? (p->tint_argb ? p->tint_argb : 0xff80ff80) : 0xffffffff);   /* set_blend_color(0x80ff80) */
     if (is_milla()) milla_draw_cube();
