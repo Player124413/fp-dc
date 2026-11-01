@@ -699,6 +699,16 @@ void rgl_present(void) {
 /* Sprites thrown away because their handle is dead: the first few are logged with the handle and the atlas
  * size, which is what tells a "the sprite is not drawn at all" report apart from "it is drawn somewhere
  * else". A long tail of these once meant a leaked texture slot (a failed bank load kept its atlas). */
+/* a frame whose rect runs off its atlas: the bank loader rejects those, so seeing one means the rect
+ * was changed after the load (or came from a stale animator). Log the first few: a smear on screen is
+ * this, and the numbers say which sprite it is. */
+static int clip_logged;
+static void clip_log(const tex_t *t, int u, int v, int uw, int vh) {
+    if (clip_logged >= 8) return;
+    clip_logged++;
+    plat_log("gles: frame (%d,%d %dx%d) clipped to its %dx%d atlas\n", u, v, uw, vh, t->w, t->h);
+}
+
 static void sprite_skip(const tex_t *t, int uw, int vh) {
     if (rgl_skip_logged >= 8) return;
     if (++rgl_skip_logged > 8) return;
@@ -713,8 +723,8 @@ void r_sprite(const tex_t *t, int u, int v, int uw, int vh, float x, float y, fl
         const gtex_t *g = &texs[t->id];
         if (u < 0) u = 0;
         if (v < 0) v = 0;
-        if (u + uw > g->w) uw = g->w - u;
-        if (v + vh > g->h) vh = g->h - v;
+        if (u + uw > g->w) { uw = g->w - u; clip_log(t, u, v, uw, vh); }
+        if (v + vh > g->h) { vh = g->h - v; clip_log(t, u, v, uw, vh); }
         if (uw <= 0 || vh <= 0) return;
     }
     bind_tex(t);
@@ -728,6 +738,18 @@ void r_sprite(const tex_t *t, int u, int v, int uw, int vh, float x, float y, fl
 void r_sprite_rot(const tex_t *t, int u, int v, int uw, int vh, float px, float py, float hx, float hy,
                   float angle, int flip, uint32_t argb) {
     if (!tex_live(t)) { rgl_skips++; return; }
+    {   /* the same guard r_sprite has: a frame that claims more than its atlas exists samples the
+         * clamped edge texels, which stretches one row of the sheet across the whole quad - a long
+         * smeared streak that follows the sprite around (the player is the only thing drawn rotated) */
+        const gtex_t *g = &texs[t->id];
+        int cl = 0;
+        if (u < 0) { u = 0; cl = 1; }
+        if (v < 0) { v = 0; cl = 1; }
+        if (u + uw > g->w) { uw = g->w - u; cl = 1; }
+        if (v + vh > g->h) { vh = g->h - v; cl = 1; }
+        if (cl) clip_log(t, u, v, uw, vh);
+        if (uw <= 0 || vh <= 0) return;
+    }
     if (flip) hx = uw - 1 - hx;
     float ex = (hx > uw - hx ? hx : uw - hx) * (rxscale > 1.f ? rxscale : 1.f) * rscale;
     float ey = (hy > vh - hy ? hy : vh - hy) * rscale;

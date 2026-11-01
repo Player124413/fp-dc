@@ -1315,8 +1315,21 @@ void player_update(player_t *p, const input_t *in) {
     fx_update(p, st0);
 }
 
+/* Every animator here holds a pointer into a bank the engine frees on a level change / restart
+ * (G.lilac, G.hair, G.objs). A draw that runs before the next update would read a freed bank: a garbage
+ * frame rect, which is drawn as a stretched smear. game_unload_all() drops them. */
+void player_unload_banks(void) {
+    hair.b = NULL;
+    psc.b = NULL;
+    spk.an.b = NULL;
+    spk.on = 0;
+    for (int i = 0; i < NPFX; i++) pfx[i].an.b = NULL;
+    G.p.an.b = NULL;
+}
+
 void player_draw(const player_t *p) {
     if (p->invuln && !p->invinc && !spk.on && (p->invuln & 4) && p->state != ST_HURT) { fx_draw(); return; }   /* invincibility: no blink (INFERRED) */
+    if (!p->an.b) { fx_draw(); return; }                 /* the banks were dropped: nothing to draw yet */
     /* the sprite hotspot (= rotation centre) is the movement object's position: p->y - ORIG_REF_DY */
     if (hair.b && !p->bike) frame_draw_rot(hair.b, anim_frame(&hair), floor(p->x - G.camx), floor(p->y - ORIG_REF_DY - G.camy), p->rot, hair_flip, p->tint > 0 ? (p->tint_argb ? p->tint_argb : 0xff80ff80) : 0xffffffff);
     const frame_t *f = anim_frame(&p->an);

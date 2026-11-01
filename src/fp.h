@@ -743,6 +743,7 @@ void game_draw(void);
 void player_reset(player_t *p, double x, double y);
 void player_update(player_t *p, const input_t *in);
 void player_draw(const player_t *p);
+void player_unload_banks(void);          /* the engine freed the banks the player's animators point into */
 int  player_invincible(const player_t *p);
 int  player_contact_safe(const player_t *p);   /* RE 2731: movement Z = 1 (boost...), attacking states, R set, E > 0 */
 int  player_attack_kind(const player_t *p);    /* legacy: monitors/rocks (shield or Z = 1 body), 0 none */

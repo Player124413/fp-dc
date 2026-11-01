@@ -127,6 +127,7 @@ static void level_free(void) {   /* everything of the level except Lilac's banks
 }
 
 void game_unload_all(void) {
+    player_unload_banks();                     /* before the banks go: the animators point into them */
     level_free();
     bank_free(&G.lilac); bank_free(&G.hair); bank_free(&G.bike);
     chr_resident = 0; chr_resident_who = -1;
