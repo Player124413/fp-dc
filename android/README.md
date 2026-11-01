@@ -155,9 +155,41 @@ append themselves to it. `sys.sndtrace` (SETTINGS -> SYSTEM -> SOUND TRACE) logs
 how a report about "extra sounds" says which sound it is.
 
 The file starts with the device, the Android API level, the window in pixels and dp, and the data folder, then
-one line per event with a relative timestamp, and every 150 frames a summary of what the renderer actually did
-(`frame 300: win 2652x1200 dp 2.75 ui 2652x1200, 812 quads + 63 sdf in 2 calls, glerr 0x0, launcher`). An
-uncaught Java exception is appended as a stack trace, and a native crash leaves its last lines in
+one line per event with a relative timestamp, and every 150 frames a summary of what the renderer and the mixer
+actually did:
+
+```
+frame 300: win 2652x1200 dp 2.75 ui 2652x1200, 812 quads + 63 sdf in 2 calls, glerr 0x0, game,
+           rss 214 MB, snd 6 voices/0 underruns m_stage1.adp
+```
+
+(voices that keep counting up mean a sound that never ends -- that is what "extra sounds" looks like; underruns
+counting up mean the audio callback is being starved; rss climbing means a leak or a texture that never goes away.)
+
+A native crash writes a self-contained block into the log before the system takes the process:
+
+```
+---- native crash: signal 11 at 0x77f6e45010, thread 12345 ----
+     fault: outside the loaded modules (no module: heap, stack or unmapped)
+     state: game, screen 2, pause 0, rss 214 MB, snd 6 voices / 0 underruns, music bgm/m_stage1.adp
+  #00 0x752dfd2ab4  libc.so+0x9cab4
+  #01 0x78dc3a7004  libfpdc.so+0x1a7004
+  ...
+     modules:
+       libfpdc.so                   0x78c0000000-0x78c01b4000
+       ...
+```
+
+The `<module>+<offset>` part is the point: the loader places every `.so` at a random address, so a bare address
+means nothing. The APK ships `lib/arm64-v8a/libfpdc.so` unstripped for exactly this, so an offset resolves
+offline against the same build:
+
+```sh
+unzip -p fpdc.apk lib/arm64-v8a/libfpdc.so > libfpdc.so
+addr2line -f -C -e libfpdc.so 0x1a7004
+```
+
+An uncaught Java exception is appended as a stack trace, and a native crash leaves its last lines in
 `fpdc.prev.log` after the restart.
 
 **ABOUT -> SHARE LOG FILE** hands the file to any messenger or mail app (it is sent as text, so no file

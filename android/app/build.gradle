@@ -66,6 +66,16 @@ android {
         }
     }
 
+    packagingOptions {
+        // Keep the symbols of the 64-bit native library in the APK: a native crash writes addresses,
+        // and <module>+<offset> only becomes a function name when the .so of the same build has its
+        // symbol table (see the crash handler in plat_android.c). Gradle strips every other ABI, so the
+        // APK grows only by this one (about 3-4 MB).
+        jniLibs {
+            keepDebugSymbols.add('**/arm64-v8a/libfpdc.so')
+        }
+    }
+
     // the game data is imported at run time (see FpActivity), so nothing large ships in the APK
     buildFeatures {
         buildConfig false

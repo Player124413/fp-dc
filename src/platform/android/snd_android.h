@@ -21,5 +21,6 @@ void snd_resume(void);
 /* the audio callback's load, for the perf overlay: voices mixed and ring fill in frames */
 int  snd_active_voices(void);
 int  snd_underruns(void);
+int  snd_music_name(char *dst, int cap);   /* the track playing now, "" when silent */
 
 #endif

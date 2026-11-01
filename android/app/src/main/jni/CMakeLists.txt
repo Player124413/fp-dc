@@ -44,6 +44,16 @@ target_include_directories(fpdc PRIVATE
 target_compile_options(fpdc PRIVATE
     -O3 -Wall -Wno-unused-parameter -Wno-sign-compare -ffp-contract=off -fno-math-errno)
 
+# A crash report from a phone carries addresses, not source text. Keep the symbol table (and line
+# info) in the 64-bit build, which is the one every phone that sends reports runs: the handler logs
+# <module>+<offset>, and app/build.gradle keeps this .so from being stripped, so
+#     addr2line -f -C -e libfpdc.so 0x2a1b4
+# resolves the report offline against the very build that crashed. The 32-bit and x86_64 builds stay
+# lean; they are not what a player reports from.
+if (ANDROID_ABI STREQUAL "arm64-v8a")
+    target_compile_options(fpdc PRIVATE -g)
+endif ()
+
 target_link_libraries(fpdc android log EGL GLESv3 aaudio m)
 # native_app_glue provides the entry point; keep it from being dropped by the linker
 target_link_options(fpdc PRIVATE "-u ANativeActivity_onCreate")

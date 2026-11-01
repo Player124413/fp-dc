@@ -17,6 +17,9 @@
  * Frame flow while a game is up:  game_draw() -> r_end() -> rgl_frame_end_hook() -> (upscale, touch
  * pad overlay, FPS, eglSwapBuffers).  The loading screen also goes through r_end(), so it is visible
  * during loads without the engine knowing anything about Android. */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1        /* dl_iterate_phdr / struct dl_phdr_info: glibc is strict, bionic is not */
+#endif
 #include <android/api-level.h>
 #include <android/log.h>
 #include <dirent.h>
@@ -35,7 +38,9 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <link.h>        /* dl_iterate_phdr: the module table of the crash report */
 #include <signal.h>
+#include <sys/syscall.h>
 #include <unwind.h>
 
 #include "../../fp.h"
@@ -142,9 +147,70 @@ static void log_open(void) {
     crash_handler_install();
 }
 
+/* resident size of the process, in MB: a report about a crash after a long play needs this (runaway
+ * textures, a leak in the mixer and a real out-of-memory all look the same without it) */
+static int proc_rss_mb(void) {
+    int fd = open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    char b[96];
+    ssize_t n = read(fd, b, sizeof b - 1);
+    close(fd);
+    if (n <= 0) return -1;
+    b[n] = 0;
+    unsigned long size = 0, rss = 0;
+    if (sscanf(b, "%lu %lu", &size, &rss) != 2) return -1;    /* pages, then pages of it resident */
+    return (int)(rss * (unsigned long)(sysconf(_SC_PAGESIZE) / 1024) / 1024);
+}
+
 /* A native crash cannot say goodbye, and the Java handler only sees Java exceptions: this writes the
- * signal and a backtrace into the same fpdc.log, which is what a report needs (the addresses are
- * resolved against the .so of the same build). */
+ * signal and a backtrace into the same fpdc.log, which is what a report needs.
+ *
+ * Bare addresses are useless in a report: the loader places every .so at a random base, so a raw
+ * 0x752dfd2ab4 says nothing.  The handler therefore prints <module>+<offset> next to each address.  The
+ * module table comes from dl_iterate_phdr() at start-up and is only read afterwards, so the handler
+ * never takes a linker lock.  The APK keeps the debug symbols of libfpdc.so (see app/build.gradle,
+ * keepDebugSymbols), so an offset resolves offline against the same build:
+ *
+ *     addr2line -f -C -e libfpdc.so 0x2a1b4
+ *
+ * The faulting address is resolved the same way: a fault inside a module, a mapped file or the heap
+ * (no module) points at very different bugs. */
+typedef struct { char name[56]; uintptr_t base, end; } crash_mod_t;
+static crash_mod_t crash_mods[64];
+static int crash_nmods;
+
+static int crash_mod_probe(struct dl_phdr_info *info, size_t size, void *data) {
+    (void)size; (void)data;
+    if (crash_nmods >= (int)(sizeof crash_mods / sizeof *crash_mods)) return 1;
+    uintptr_t base = (uintptr_t)info->dlpi_addr, end = base;
+    for (int i = 0; i < info->dlpi_phnum; i++) {
+        const ElfW(Phdr) *p = &info->dlpi_phdr[i];
+        if (p->p_type != PT_LOAD) continue;
+        uintptr_t e = base + (uintptr_t)p->p_vaddr + (uintptr_t)p->p_memsz;   /* the mapped window */
+        if (e > end) end = e;
+    }
+    if (end <= base) return 0;
+    const char *path = info->dlpi_name && info->dlpi_name[0] ? info->dlpi_name : "<main>";
+    const char *slash = strrchr(path, '/');
+    crash_mod_t *m = &crash_mods[crash_nmods++];
+    snprintf(m->name, sizeof m->name, "%s", slash ? slash + 1 : path);
+    m->base = base;
+    m->end = end;
+    return 0;
+}
+
+/* module that holds addr, or NULL when it is the heap / a stack / an unmapped page */
+static const char *crash_mod_of(uintptr_t addr, uintptr_t *off) {
+    for (int i = 0; i < crash_nmods; i++) {
+        if (addr >= crash_mods[i].base && addr < crash_mods[i].end) {
+            *off = addr - crash_mods[i].base;   /* offset from the ELF load address: what addr2line wants */
+            return crash_mods[i].name;
+        }
+    }
+    *off = 0;
+    return NULL;
+}
+
 typedef struct { uintptr_t pc[48]; int n; } bt_t;
 
 static _Unwind_Reason_Code bt_step(struct _Unwind_Context *c, void *arg) {
@@ -166,12 +232,40 @@ static void crash_handler(int sig, siginfo_t *info, void *ctx) {
     bt_t bt;
     bt.n = 0;
     _Unwind_Backtrace(bt_step, &bt);
-    char buf[96];
-    int n = snprintf(buf, sizeof buf, "\n---- native crash: signal %d at %p ----\n", sig,
-                     info ? info->si_addr : (void *)0);
+    char buf[160];
+    uintptr_t faddr = info ? (uintptr_t)info->si_addr : 0;
+    int n = snprintf(buf, sizeof buf, "\n---- native crash: signal %d at %p, thread %ld ----\n", sig,
+                     (void *)faddr, (long)syscall(SYS_gettid));
     crash_write(buf, n);
+
+    /* where the bad pointer pointed, and what the game was doing: this is what tells a bug in the
+     * mixer from a bug in the renderer from a bug in the game code */
+    { uintptr_t off; const char *m = crash_mod_of(faddr, &off);
+      if (m) n = snprintf(buf, sizeof buf, "     fault: %s+0x%lx\n", m, (unsigned long)off);
+      else   n = snprintf(buf, sizeof buf, "     fault: %s (no module: heap, stack or unmapped)\n",
+                          faddr ? "outside the loaded modules" : "null");
+      crash_write(buf, n); }
+    { char music[64];
+      snd_music_name(music, sizeof music);
+      n = snprintf(buf, sizeof buf,
+                   "     state: %s, screen %d, pause %d, rss %d MB, snd %d voices / %d underruns, music %s\n",
+                   shell_in_game() ? "game" : "launcher", shell_screen(), shell_game_paused(),
+                   proc_rss_mb(), snd_active_voices(), snd_underruns(), music[0] ? music : "-");
+      crash_write(buf, n); }
+
     for (int i = 0; i < bt.n; i++) {
-        n = snprintf(buf, sizeof buf, "  #%02d %p\n", i, (void *)bt.pc[i]);
+        uintptr_t off;
+        const char *m = crash_mod_of(bt.pc[i], &off);
+        if (m) n = snprintf(buf, sizeof buf, "  #%02d %p  %s+0x%lx\n", i, (void *)bt.pc[i], m,
+                            (unsigned long)off);
+        else   n = snprintf(buf, sizeof buf, "  #%02d %p  ?\n", i, (void *)bt.pc[i]);
+        crash_write(buf, n);
+    }
+    static const char mod_hdr[] = "     modules:\n";
+    crash_write(mod_hdr, (int)sizeof mod_hdr - 1);
+    for (int i = 0; i < crash_nmods; i++) {
+        n = snprintf(buf, sizeof buf, "       %-28s 0x%lx-0x%lx\n", crash_mods[i].name,
+                     (unsigned long)crash_mods[i].base, (unsigned long)crash_mods[i].end);
         crash_write(buf, n);
     }
     signal(sig, SIG_DFL);                        /* the system still gets its tombstone */
@@ -179,6 +273,8 @@ static void crash_handler(int sig, siginfo_t *info, void *ctx) {
 }
 
 static void crash_handler_install(void) {
+    crash_nmods = 0;
+    dl_iterate_phdr(crash_mod_probe, NULL);      /* before any other thread can crash, and never again */
     static char alt[64 * 1024];
     stack_t ss;
     memset(&ss, 0, sizeof ss);
@@ -923,9 +1019,16 @@ void android_main(struct android_app *app) {
         if ((ticks % 150) == 0) {
             int q = 0, sdf = 0, fl = 0, err = 0;
             ui_stats(&q, &sdf, &fl, &err);
-            plat_log("frame %u: win %dx%d dp %.2f ui %dx%d, %d quads + %d sdf in %d calls, glerr 0x%x, %s",
+            /* the sound state rides along: voices that never end (a stuck loop) and a fall in the
+             * delivery rate are the two things a "the audio is wrong" report has to show */
+            char music[64];
+            snd_music_name(music, sizeof music);
+            const char *mbase = strrchr(music, '/');
+            plat_log("frame %u: win %dx%d dp %.2f ui %dx%d, %d quads + %d sdf in %d calls, glerr 0x%x, "
+                     "%s, rss %d MB, snd %d voices/%d underruns %s",
                      ticks, win_w, win_h, (double)dp_scale, ui_w(), ui_h(), q, sdf, fl, (unsigned)err,
-                     shell_active() ? "launcher" : "game");
+                     shell_active() ? "launcher" : "game", proc_rss_mb(), snd_active_voices(),
+                     snd_underruns(), music[0] ? (mbase ? mbase + 1 : music) : "-");
         }
 
         if (want_exit) {

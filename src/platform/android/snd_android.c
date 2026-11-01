@@ -397,6 +397,16 @@ static double mus_phase;
 int music_serial(void) { return mus_serial; }
 int music_active(void) { return mus_f && !mus_paused && !mus_ended; }
 
+/* the current track, for the log and the crash report (copied without the lock and without trusting
+ * the terminator: a report must never be the thing that crashes) */
+int snd_music_name(char *dst, int cap) {
+    if (!dst || cap <= 0) return 0;
+    int n = 0;
+    for (; n < cap - 1 && n < (int)sizeof mus_name && mus_name[n]; n++) dst[n] = mus_name[n];
+    dst[n] = 0;
+    return n;
+}
+
 static int ring_used(void) {
     int used = mus_head - mus_tail;
     if (used < 0) used += MUS_RING;
@@ -420,25 +430,36 @@ static void *mus_worker(void *arg) {
         if (mus_stop_flag) { pthread_mutex_unlock(&mus_lock); break; }
 
         if (mus_req_kind) {
-            if (mus_f) { fclose(mus_f); mus_f = NULL; }
             int kind = mus_req_kind;
+            char req[64];
+            snprintf(req, sizeof req, "%s", mus_req);
             mus_req_kind = 0;
+            if (mus_f) { fclose(mus_f); mus_f = NULL; }
+            mus_gen++;                       /* a read that is already in flight is stale from here on */
+            FILE *nf = NULL;
             if (kind != 3) {
                 char path[600];
-                snprintf(path, sizeof path, "%s/%s", plat_data_root(), mus_req);
-                mus_f = fopen(path, "rb");
-                if (mus_f) {
-                    snprintf(mus_name, sizeof mus_name, "%s", mus_req);
-                    mus_pcm_stream = strstr(mus_req, ".pcm") != NULL;   /* the DC port played both */
+                snprintf(path, sizeof path, "%s/%s", plat_data_root(), req);
+                pthread_mutex_unlock(&mus_lock);      /* opening a file never holds the mixer's lock */
+                nf = fopen(path, "rb");
+                pthread_mutex_lock(&mus_lock);
+                if (mus_req_kind) {                   /* a newer request came in while the file opened */
+                    if (nf) fclose(nf);
+                    continue;
+                }
+                if (nf) {
+                    snprintf(mus_name, sizeof mus_name, "%s", req);
+                    mus_pcm_stream = strstr(req, ".pcm") != NULL;   /* the DC port played both */
                     mus_rate = mus_pcm_stream ? 22050 : MUS_RATE;
-                    plat_log("snd: music %s, %d Hz stereo -> %d Hz", mus_req, mus_rate, out_rate);
+                    plat_log("snd: music %s, %d Hz stereo -> %d Hz", req, mus_rate, out_rate);
                 } else {
-                    plat_log("music missing %s\n", path);
+                    plat_log("music missing %s", path);
                     mus_name[0] = 0;
                 }
             } else {
                 mus_name[0] = 0;
             }
+            mus_f = nf;
             mus_head = mus_tail = 0;
             mus_hist[0] = mus_hist[1] = 0;
             mus_step_size[0] = mus_step_size[1] = 127;
@@ -446,7 +467,6 @@ static void *mus_worker(void *arg) {
             mus_ended = 0;
             mus_once = kind == 2;
             mus_paused = 0;
-            mus_gen++;
             mus_serial++;
         }
 
@@ -460,7 +480,8 @@ static void *mus_worker(void *arg) {
         pthread_mutex_unlock(&mus_lock);
 
         int pcm_stream = mus_pcm_stream;
-        size_t got = fread(buf, 1, sizeof buf, mus_f);
+        if (!f) { pthread_mutex_lock(&mus_lock); continue; }   /* only this thread opens or closes it */
+        size_t got = fread(buf, 1, sizeof buf, f);
         if (got >= 2 * (size_t)(pcm_stream ? 2 : 1)) got &= ~(size_t)(pcm_stream ? 3 : 1);   /* whole stereo frames */
 
         pthread_mutex_lock(&mus_lock);
