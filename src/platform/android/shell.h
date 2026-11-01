@@ -19,7 +19,7 @@ enum { SCREEN_HOME = 0, SCREEN_SETTINGS, SCREEN_CONTROLS, SCREEN_ABOUT, SCREEN_D
 /* Widget ids of the launcher screens: small integers, unique per screen (the widget table holds 128).
  * The host selftest taps them by id, so they live here rather than in launcher.c. */
 enum {
-    ID_HOME = 0,        /* +0 PLAY, +1 CONTROLS, +2 SETTINGS, +3 ABOUT */
+    ID_HOME = 0,        /* +0 PLAY, +1 CONTROLS, +2 SETTINGS, +3 ABOUT, +4 COPY LOG */
     ID_SET = 10,        /* +0 BACK, +10..+12 tabs, +20.. PICTURE, +30.. INPUT, +40.. SYSTEM */
     ID_ABOUT = 60,      /* +1 SHARE LOG, +2 COPY LOG, +3 SAVE LOG */
     ID_DATA = 70,       /* +0 IMPORT */

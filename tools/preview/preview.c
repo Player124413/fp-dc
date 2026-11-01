@@ -237,6 +237,17 @@ static void scenario_selftest(void) {
     tap_widget(3, "ABOUT is on screen");
     expect(shell_screen() == SCREEN_ABOUT, "ABOUT opens the about screen");
 
+    /* COPY LOG is on the launcher itself, next to PLAY: the log of the session that just went wrong
+     * must not need a trip through the pause menu (or a cable) to get out */
+    {
+        int before = stub_log_copies();
+        scenario_begin();
+        shell_frame(1.0f / 60.0f);
+        tap_widget(ID_HOME + 4, "COPY LOG is on the launcher");
+        expect(stub_log_copies() == before + 1, "COPY LOG copies the log from the launcher");
+        expect(shell_screen() == SCREEN_HOME, "and leaves the launcher where it was");
+    }
+
     scenario_begin();
     shell_frame(1.0f / 60.0f);
     tap_widget(2, "SETTINGS is on screen");
@@ -308,8 +319,11 @@ static void scenario_selftest(void) {
 
         shell_pause_open(1);
         shell_draw_overlay(1.0f / 60.0f);
-        tap_overlay(ID_PAUSE + 3, "COPY LOG is on screen");
-        expect(stub_log_copies() == 1, "COPY LOG copies the log for the chat");
+        {
+            int before = stub_log_copies();
+            tap_overlay(ID_PAUSE + 3, "COPY LOG is on screen");
+            expect(stub_log_copies() == before + 1, "COPY LOG copies the log for the chat");
+        }
 
         shell_pause_open(1);
         shell_draw_overlay(1.0f / 60.0f);

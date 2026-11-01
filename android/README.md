@@ -37,8 +37,8 @@ Requirements: Android Studio (or the command-line SDK + NDK 26/27 + CMake 3.22 +
 ```sh
 cd android
 gradle wrapper --gradle-version 8.7     # once (or just open the folder in Android Studio)
-./gradlew assembleRelease               # -> app/build/outputs/apk/release/app-release.apk
-./gradlew installRelease                # or run it straight onto a connected phone
+./gradlew assembleDebug                 # -> app/build/outputs/apk/debug/app-debug.apk
+./gradlew installDebug                  # or run it straight onto a connected phone
 ```
 
 `local.properties` needs `sdk.dir=...` (Android Studio writes it). ABIs built: `arm64-v8a`, `armeabi-v7a`,
@@ -52,11 +52,12 @@ Android refuses an update whose signature differs, and that is what forces an un
 with the CI run number, so a new APK is always an *update*:
 
 ```sh
-adb install -r app-release.apk          # debug and release share the key, so either can replace the other
+adb install -r app-debug.apk            # signed with the committed key: installs over the previous build
 ```
 
-The CI checks this on every build: it verifies both APKs, prints the certificate fingerprint and fails when
-the two are not signed with the same key.
+The CI checks this on every build: it verifies the APK with `apksigner` and fails when it is not signed.
+Only a debug APK is built (there is no `assembleRelease` step any more) -- but it is signed with the same
+committed key, so it replaces the previous build just like a release one would.
 
 ## Game data
 
@@ -131,6 +132,9 @@ music), so the package is the Dreamcast `converted/` tree, unpacked.
 | `pad.*` | | the touch layout written by the editor |
 
 ## Leaving the game
+
+The launcher's home screen is PLAY (or IMPORT GAME DATA), CONTROLS, SETTINGS, ABOUT and **COPY LOG**: the log
+of the session that just went wrong is one tap away, without going into the game or plugging in a cable.
 
 In game, the hardware BACK button or the pad's gear opens the pause menu: RESUME, CONTROLS, SHARE LOG,
 COPY LOG, EXIT TO LAUNCHER. The menu freezes the game (`shell_game_paused()` also covers the controls
@@ -238,7 +242,7 @@ The workflow has two jobs, and it does not run anything on an emulator — the p
 | job | what it does |
 | --- | --- |
 | `checks` | the host checks below: the GLES sources compile against the stub NDK headers, every launcher screen renders to PNG, the colour packing and the draw order of the GLES backend are pinned by tests, and a selftest taps through the launcher (PLAY, the tabs, a row, a switch, a slider) checking that each one reacts |
-| `apk` | `sdkmanager` installs the SDK/NDK/CMake, Gradle 8.7 builds `assembleDebug assembleRelease`, then both APKs are inspected: `lib/*/libfpdc.so` and `classes.dex` present, signed, and the two certificate fingerprints identical (that is what makes an update install without an uninstall) |
+| `apk` | `sdkmanager` installs the SDK/NDK/CMake, Gradle 8.7 builds `assembleDebug` (debug only: no release APK any more), then the APK is inspected: `lib/*/libfpdc.so` and `classes.dex` present and signed with the committed key (that is what makes an update install without an uninstall) |
 
 ## Verified / not verified
 

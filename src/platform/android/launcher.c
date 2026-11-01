@@ -94,7 +94,9 @@ static void column_begin(int n) {
         col.y = ((float)ui_h() - total) * 0.5f;
     } else {
         col.x = MARGIN;
-        col.y = (float)ui_h() - total - MARGIN * 1.4f;
+        /* one more line of footer under the last button: with five rows (COPY LOG) the stack used to
+         * land on the hint text on a tall phone */
+        col.y = (float)ui_h() - total - MARGIN * 1.4f - ui_dp(18);
     }
     col.w = bw; col.h = bh; col.gap = gap;
 }
@@ -129,11 +131,16 @@ static void home(float dt) {
         ui_text(MARGIN, ty + (UI_TEXT_H(px) + ui_dp(5)) * 3, px, UI_DIM, "3. TAP IMPORT AND PICK THE ZIP");
     }
 
-    column_begin(4);
+    /* COPY LOG sits with PLAY and SETTINGS, not only behind ABOUT and the pause menu: a report about a
+     * crash, a missing sprite or a missing sound starts with "plug the phone in and find the file"
+     * otherwise, and the log is one tap away here. */
+    int has_log = shell_log_file()[0] != 0;
+    column_begin(5);
     int play = col_next(ID_HOME + 0, shell_data_ok() ? "PLAY" : "IMPORT GAME DATA", W_PRIMARY, 1);
     int ctl = col_next(ID_HOME + 1, "CONTROLS", W_GHOST, 1);
     int set = col_next(ID_HOME + 2, "SETTINGS", W_GHOST, 1);
     int abt = col_next(ID_HOME + 3, "ABOUT", W_GHOST, 1);
+    int logc = col_next(ID_HOME + 4, "COPY LOG", W_GHOST, has_log);
     if (play) {
         if (shell_data_ok()) shell_launch_game();
         else shell_open(SCREEN_DATA);
@@ -141,10 +148,13 @@ static void home(float dt) {
     if (ctl) shell_open(SCREEN_CONTROLS);
     if (set) shell_open(SCREEN_SETTINGS);
     if (abt) shell_open(SCREEN_ABOUT);
+    if (logc) shell_log_copy();          /* stays on the launcher: the log went to the clipboard */
+
 
     float fpx = ui_dp(1.1f);
     ui_text(MARGIN, (float)ui_h() - MARGIN - UI_TEXT_H(fpx), fpx, 0x558a9ac0,
-            "BACK: EXIT   -   IN GAME, THE GEAR (OR BACK) OPENS THE PAUSE MENU: RESUME, CONTROLS, EXIT");
+            has_log ? "COPY LOG: THE SESSION LOG GOES TO THE CLIPBOARD"
+                    : "BACK: EXIT   -   IN GAME, BACK OPENS THE PAUSE MENU");
 
     if (shell_starting()) {
         /* game_init() takes seconds on a phone: a tap on PLAY must not look like nothing happened */
