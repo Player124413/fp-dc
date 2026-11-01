@@ -25,6 +25,7 @@
 #include "../fp.h"
 #include "render_gles.h"
 #include "twiddle.h"
+#include "present_geom.h"
 #include "../platform/android/ui.h"   /* ui_gles_init(): the shell UI shares the GL context */
 #include <math.h>
 
@@ -116,14 +117,16 @@ static const char *FS_WORLD =
 static const char *VS_PRESENT =
     "#version 300 es\n"
     "layout(location=0) in vec2 a_pos;\n"
-    "uniform vec2 u_scale, u_offset, u_target;\n"
+    "uniform vec2 u_scale, u_offset, u_target, u_view, u_viewsize;\n"
     "out vec2 v_uv;\n"
     "void main() {\n"
     "  vec2 p = a_pos * u_scale + u_offset;\n"
     "  gl_Position = vec4(p.x / u_target.x * 2.0 - 1.0, 1.0 - p.y / u_target.y * 2.0, 0.0, 1.0);\n"
-    /* a_pos is the view rect in window pixels; the target's row 0 is the BOTTOM of the view
-       (the world pass maps logical y = 0 to clip y = +1), so v is flipped here once */
-    "  v_uv = vec2(a_pos.x / u_target.x, 1.0 - a_pos.y / u_target.y);\n"
+    /* a_pos is the view rect in window pixels: the uv has to span that rect, not the window. Dividing
+       by the window zoomed the picture by 1.25x and cropped its sides on a 2.2:1 phone. The target's
+       row 0 is the BOTTOM of the view (the world pass maps logical y = 0 to clip y = +1), so v is
+       flipped here once. tools/android/check_present.c pins the same arithmetic. */
+    "  v_uv = vec2((a_pos.x - u_view.x) / u_viewsize.x, 1.0 - (a_pos.y - u_view.y) / u_viewsize.y);\n"
     "}\n";
 
 static const char *FS_PRESENT =
@@ -131,16 +134,31 @@ static const char *FS_PRESENT =
     "precision mediump float;\n"
     "uniform sampler2D u_tex;\n"
     "uniform vec2 u_texsize;\n"
-    "uniform int u_scan;\n"
+    "uniform int u_scan, u_blur;\n"
+    "uniform float u_tint;\n"
     "in vec2 v_uv; out vec4 o;\n"
     "void main() {\n"
     "  vec2 uv = v_uv;\n"
-    "  vec4 c = texture(u_tex, uv);\n"
+    "  vec4 c;\n"
+    "  if (u_blur == 1) {\n"      /* the ambient backdrop: the same picture, smeared and dimmed */
+    "    vec2 px = 1.0 / u_texsize;\n"
+    "    c  = texture(u_tex, uv) * 0.28;\n"
+    "    c += texture(u_tex, uv + vec2( 5.0,  0.0) * px) * 0.14;\n"
+    "    c += texture(u_tex, uv + vec2(-5.0,  0.0) * px) * 0.14;\n"
+    "    c += texture(u_tex, uv + vec2( 0.0,  5.0) * px) * 0.14;\n"
+    "    c += texture(u_tex, uv + vec2( 0.0, -5.0) * px) * 0.14;\n"
+    "    c += texture(u_tex, uv + vec2( 6.0,  6.0) * px) * 0.08;\n"
+    "    c += texture(u_tex, uv + vec2(-6.0,  6.0) * px) * 0.08;\n"
+    "    c += texture(u_tex, uv + vec2( 6.0, -6.0) * px) * 0.08;\n"
+    "    c += texture(u_tex, uv + vec2(-6.0, -6.0) * px) * 0.08;\n"
+    "  } else {\n"
+    "    c = texture(u_tex, uv);\n"
+    "  }\n"
     "  if (u_scan == 1) {\n"
     "    float line = mod(floor(gl_FragCoord.y), 3.0);\n"      /* every third row a bit darker */
     "    c.rgb *= (line < 0.5) ? 0.78 : 1.0;\n"
     "  }\n"
-    "  o = vec4(c.rgb, 1.0);\n"
+    "  o = vec4(c.rgb * u_tint, 1.0);\n"
     "}\n";
 
 static GLuint compile(const char *vs, const char *fs, const char *name) {
@@ -293,21 +311,19 @@ void rgl_set_mode(int mode, int filter_linear, int letterbox, int scanlines) {
     if (opt_mode == RGL_PIXEL && (!fbo || fbo_w != VIEW_W || fbo_h != VIEW_H)) fbo_make(VIEW_W, VIEW_H);
 }
 
-/* the placement of the logical view inside the window */
+/* the placement of the logical view inside the window (present_geom.h has the arithmetic) */
 static void view_transform(float *sx, float *sy, float *ox, float *oy) {
-    float tw = (float)win_w, th = (float)win_h;
-    if (opt_letterbox) {
-        float s = tw / (float)VIEW_W;
-        if (th / (float)VIEW_H < s) s = th / (float)VIEW_H;
-        *sx = *sy = s;
-        *ox = (tw - (float)VIEW_W * s) * 0.5f;
-        *oy = (th - (float)VIEW_H * s) * 0.5f;
-    } else {                                   /* fill: stretch to the window */
-        *sx = tw / (float)VIEW_W;
-        *sy = th / (float)VIEW_H;
-        *ox = *oy = 0;
-    }
+    view_rect_t r = view_fit(win_w, win_h, VIEW_W, VIEW_H, opt_letterbox);
+    *sx = (r.x1 - r.x0) / (float)VIEW_W;
+    *sy = (r.y1 - r.y0) / (float)VIEW_H;
+    *ox = r.x0;
+    *oy = r.y0;
 }
+
+/* the rectangle this frame was drawn for: rgl_present() must not re-read opt_letterbox, or a game
+ * that flips its own SCREEN SIZE option mid-frame presents half a frame in one mode and half in the
+ * other (a horizontal seam in the middle of the picture) */
+static float pv_x0, pv_y0, pv_x1, pv_y1;
 
 /* ------------------------------------------------------------------ batching */
 static void flush(void) {
@@ -392,7 +408,12 @@ int r_init(void) {
     return 0;
 }
 
-void r_set_letterbox(int on) { opt_letterbox = on ? 1 : 0; }
+/* The game's own SCREEN SIZE option (4:3 bars on a Dreamcast output). On the phone the port's ASPECT
+ * setting decides how the view fits the screen, and letting the game flip the same flag meant that
+ * apply_settings() and the game fought over it every frame: the presentation changed size between the
+ * background and the sprites of one frame. The game's option is a no-op here, as it already is in the
+ * Dreamcast build with FP_VIEW_320. */
+void r_set_letterbox(int on) { (void)on; }
 void r_set_additive(int on) { add_on = on ? 1 : 0; }
 void r_set_invert(int on) { invert_on = on ? 1 : 0; }
 void r_set_scale(float s) { rscale = s; }
@@ -539,6 +560,10 @@ void r_begin(void) {
     rscale = rxscale = 1.f;
     r_stat_polys = 0;
     in_fbo = opt_mode == RGL_PIXEL && fbo && fbo_w == VIEW_W;
+    {
+        view_rect_t r = view_fit(win_w, win_h, VIEW_W, VIEW_H, opt_letterbox);
+        pv_x0 = r.x0; pv_y0 = r.y0; pv_x1 = r.x1; pv_y1 = r.y1;
+    }
     if (in_fbo) {
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glViewport(0, 0, VIEW_W, VIEW_H);
@@ -559,46 +584,27 @@ void r_end(void) {
     if (rgl_frame_end_hook) rgl_frame_end_hook();
 }
 
-/* the frame's pixels are on screen: upscale the 240p view (the platform swaps the buffers) */
-void rgl_present(void) {
-    if (!in_fbo) return;
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, win_w, win_h);
-    glDisable(GL_SCISSOR_TEST);
-    glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT);            /* the letterbox bars */
-    glDisable(GL_BLEND);
-    glUseProgram(prog_present);
-    float s = 1, ox = 0, oy = 0;
-    float tw = (float)win_w, th = (float)win_h;
-    {
-        float sx = tw / (float)VIEW_W, sy = th / (float)VIEW_H;
-        if (opt_letterbox) {
-            s = sx < sy ? sx : sy;
-            ox = (tw - (float)VIEW_W * s) * 0.5f;
-            oy = (th - (float)VIEW_H * s) * 0.5f;
-        } else {
-            s = -1;                                        /* non-uniform: handled below */
-        }
-    }
-    float x0 = ox, y0 = oy, x1 = ox + (float)VIEW_W * s, y1 = oy + (float)VIEW_H * s;
-    if (s < 0) { x0 = 0; y0 = 0; x1 = tw; y1 = th; }
+/* one quad of the upscale: the picture, or the dimmed backdrop behind it.  vx,vy/vw,vh is the part of
+ * the 426x240 texture the quad shows (the view rect for the picture, the whole texture for the
+ * backdrop), which is why the shader needs it: dividing by the *window* instead zoomed the picture by
+ * 1.25x and cut its sides off on a 2.2:1 phone. */
+static void present_draw(float qx0, float qy0, float qx1, float qy1,
+                         float vx, float vy, float vw, float vh, int blur, float tint) {
     glUniform2f(glGetUniformLocation(prog_present, "u_scale"), 1, 1);
     glUniform2f(glGetUniformLocation(prog_present, "u_offset"), 0, 0);
-    glUniform2f(glGetUniformLocation(prog_present, "u_target"), tw, th);
+    glUniform2f(glGetUniformLocation(prog_present, "u_target"), (float)win_w, (float)win_h);
+    glUniform2f(glGetUniformLocation(prog_present, "u_view"), vx, vy);
+    glUniform2f(glGetUniformLocation(prog_present, "u_viewsize"), vw, vh);
     glUniform2f(glGetUniformLocation(prog_present, "u_texsize"), (float)VIEW_W, (float)VIEW_H);
-    glUniform1i(glGetUniformLocation(prog_present, "u_scan"), opt_scan);
+    glUniform1i(glGetUniformLocation(prog_present, "u_scan"), blur ? 0 : opt_scan);
+    glUniform1i(glGetUniformLocation(prog_present, "u_blur"), blur);
+    glUniform1f(glGetUniformLocation(prog_present, "u_tint"), tint);
     glUniform1i(glGetUniformLocation(prog_present, "u_tex"), 0);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, fbo_tex);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, opt_linear ? GL_LINEAR : GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, opt_linear ? GL_LINEAR : GL_NEAREST);
-    /* a screen-space quad through the vertex buffer, so no extra object is needed */
     static vtx_t q[4];
-    q[0] = (vtx_t){ x0, y0, 0, 0, 0xffffffffu, 0, { 0, 0, 0 } };
-    q[1] = (vtx_t){ x1, y0, 1, 0, 0xffffffffu, 0, { 0, 0, 0 } };
-    q[2] = (vtx_t){ x1, y1, 1, 1, 0xffffffffu, 0, { 0, 0, 0 } };
-    q[3] = (vtx_t){ x0, y1, 0, 1, 0xffffffffu, 0, { 0, 0, 0 } };
+    q[0] = (vtx_t){ qx0, qy0, 0, 0, 0xffffffffu, 0, { 0, 0, 0 } };
+    q[1] = (vtx_t){ qx1, qy0, 1, 0, 0xffffffffu, 0, { 0, 0, 0 } };
+    q[2] = (vtx_t){ qx1, qy1, 1, 1, 0xffffffffu, 0, { 0, 0, 0 } };
+    q[3] = (vtx_t){ qx0, qy1, 0, 1, 0xffffffffu, 0, { 0, 0, 0 } };
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof q, q);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
@@ -611,6 +617,30 @@ void rgl_present(void) {
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, (void *)0);
     rgl_drawcalls++;
 }
+
+/* the frame's pixels are on screen: upscale the 240p view (the platform swaps the buffers) */
+void rgl_present(void) {
+    if (!in_fbo) return;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, win_w, win_h);
+    glDisable(GL_SCISSOR_TEST);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);            /* only a first-frame fallback: the backdrop covers it */
+    glDisable(GL_BLEND);
+    glUseProgram(prog_present);
+    float tw = (float)win_w, th = (float)win_h;
+    float x0 = pv_x0, y0 = pv_y0, x1 = pv_x1, y1 = pv_y1;
+    if (x1 - x0 < 1.0f || y1 - y0 < 1.0f) { x0 = 0; y0 = 0; x1 = tw; y1 = th; }
+    /* the bars of the aspect-preserving mode are not black bars: the same picture, smeared and
+     * dimmed, fills the window behind it, so a 2.2:1 phone looks filled and the play area keeps its
+     * exact shape (nothing is stretched and nothing is cut off) */
+    {
+        int fills = x0 <= 1.0f && y0 <= 1.0f && x1 >= tw - 1.0f && y1 >= th - 1.0f;
+        if (!fills) present_draw(0, 0, tw, th, 0, 0, tw, th, 1, 0.34f);
+    }
+    present_draw(x0, y0, x1, y1, x0, y0, x1 - x0, y1 - y0, 0, 1.0f);
+}
+
 
 void r_sprite(const tex_t *t, int u, int v, int uw, int vh, float x, float y, float w, float h, int flip, uint32_t argb) {
     if (t->id < 0 || t->id >= ntex || !texs[t->id].id || w <= 0 || h <= 0) return;

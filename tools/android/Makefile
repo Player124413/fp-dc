@@ -13,8 +13,8 @@ ANDROID_SRC := $(ROOT)/src/renderer/render_gles.c $(ROOT)/src/renderer/ui_gles.c
                $(ROOT)/src/renderer/twiddle.c \
                $(ROOT)/src/platform/android/plat_android.c $(ROOT)/src/platform/android/snd_android.c
 
-.PHONY: check syntax twiddle font colour uiorder shell selftest preview
-check: syntax twiddle font colour uiorder shell selftest
+.PHONY: check syntax twiddle font colour uiorder present shell selftest preview
+check: syntax twiddle font colour uiorder present shell selftest
 
 syntax:
 	@for f in $(ANDROID_SRC); do echo "  syntax-check $$f"; $(CC) $(SYNTAX) $$f || exit 1; done
@@ -32,6 +32,10 @@ colour:
 uiorder:
 	@$(CC) -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-strict-prototypes -I$(STUB) \
 	   -o /tmp/fpdc_check_ui_order check_ui_order.c -lm && /tmp/fpdc_check_ui_order
+
+# where the 426x240 view lands on the screen and what part of the upscale it samples
+present:
+	@$(CC) -std=gnu11 -Wall -Wextra -o /tmp/fpdc_check_present check_present.c -lm && /tmp/fpdc_check_present
 
 shell:
 	@$(MAKE) -C ../preview >/dev/null && echo "  shell: preview harness builds"

@@ -209,7 +209,9 @@ static void settings_screen(void) {
     if (settings_tab == 0) {
         static const char *modes[] = { "PIXEL", "SHARP" };
         static const char *filt[] = { "NEAREST", "SMOOTH" };
-        static const char *aspect[] = { "16:9 LETTERBOX", "FILL SCREEN" };
+        /* KEEP ASPECT keeps the view's shape and fills the rest of the screen with the same frame smeared
+         * and dimmed (no black bars); FILL SCREEN stretches the view over the whole window */
+        static const char *aspect[] = { "KEEP ASPECT", "FILL SCREEN" };
         static const char *onoff[] = { "OFF", "ON" };
         static const char *fps[] = { "60", "30" };
         int mode = shell_get_int("render.mode", 0), filter = shell_get_int("render.filter", 0);
@@ -282,7 +284,7 @@ static void settings_screen(void) {
         row_geom(i++, n, &y, &h);
         {
             int lbox = shell_get_int("video.letterbox", 1);
-            if (w_toggle(ID_SET + 43, x, y, w, h, "16:9 LETTERBOX", &lbox)) shell_set_int("video.letterbox", lbox);
+            if (w_toggle(ID_SET + 43, x, y, w, h, "KEEP ASPECT", &lbox)) shell_set_int("video.letterbox", lbox);
         }
         row_geom(i++, n, &y, &h);
         if (w_button(ID_SET + 44, x, y, w, h, "RESET ALL SETTINGS", W_DANGER, 1)) {

@@ -90,6 +90,12 @@ music), so the package is the Dreamcast `converted/` tree, unpacked.
 
 - The view is rendered into a 426×240 texture and upscaled once per frame: fill cost drops by ~20× at 1080p
   and the pixel grid stays uniform (`render.mode = PIXEL`; `SHARP` draws straight at display scale).
+- The upscale places the view with `present_geom.h` (one function for the rectangle and for the texture
+  coordinates of that rectangle) — `tools/android/check_present.c` pins it. With `video.letterbox` the view
+  keeps its exact 426×240 shape and the screen around it is filled with the same frame smeared and dimmed
+  (no black bars, nothing stretched, nothing cut off); with it off the picture is stretched to the screen.
+  The game's own SCREEN SIZE option (`r_set_letterbox`, a Dreamcast 4:3 thing) does not move the phone's
+  presentation: use SETTINGS → ASPECT.
 - Paletted atlases are uploaded as the index byte itself (`GL_R8`) with the level palette as a 256×4 lookup
   texture sampled with `texelFetch`: 8 bpp in texture memory, the same as the Dreamcast, no CPU conversion,
   and `r_pal_load` costs one 1 KB upload. ETC2 atlases (FPTX fmt 5/6) are also supported and uploaded as
@@ -107,7 +113,7 @@ music), so the package is the Dreamcast `converted/` tree, unpacked.
 |---|---|---|
 | `render.mode` | 0 | 0 = 426×240 texture upscale, 1 = draw at display scale |
 | `render.filter` | 1 | 0 = nearest, 1 = linear when upscaling |
-| `render.letterbox` | 1 | keep 16:9 (0 = stretch to the screen) |
+| `video.letterbox` | 1 | keep the view's shape (0 = stretch to the screen) |
 | `render.scanlines` | 0 | subtle 3-row scanlines |
 | `render.fps` | 60 | 30 halves the draw rate |
 | `sys.showfps` | 0 | FPS counter |
