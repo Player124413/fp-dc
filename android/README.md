@@ -159,12 +159,28 @@ one line per event with a relative timestamp, and every 150 frames a summary of 
 actually did:
 
 ```
-frame 300: win 2652x1200 dp 2.75 ui 2652x1200, 812 quads + 63 sdf in 2 calls, glerr 0x0, game,
-           rss 214 MB, snd 6 voices/0 underruns m_stage1.adp
+frame 300: win 2652x1200 dp 3.25 ui 2652x1200, 812 quads + 63 sdf in 2 calls, glerr 0x0,
+           game (mode 1 lvl dv1 p 1234,300 f 510, game 152 quads), rss 214 MB,
+           snd 6 voices/0 underruns m_stage1.adp
 ```
+
+The `game (...)` part is the engine's own state: the mode (`0` frontend, `1` a stage, `2` results, `4` ending,
+`5` a story room), the level directory, the player position and the frame counter, then **how many quads the
+game pushed into the frame** -- `0` means the picture is a bare clear, which is never a real frame (even a fade
+to black draws its dimmer). Read it first when the screen is wrong: `0 quads` is a drawing problem, a `p` of
+`nan` is a physics problem, and a plausible picture with 0 quads cannot happen.
 
 (voices that keep counting up mean a sound that never ends -- that is what "extra sounds" looks like; underruns
 counting up mean the audio callback is being starved; rss climbing means a leak or a texture that never goes away.)
+
+If the engine draws nothing for a second, the port says so on screen instead of leaving a silent black screen:
+
+```
+NO PICTURE - REPORT IT (COPY LOG)
+```
+
+That banner is not a crash: the app is running, the touch pad works, and the engine produced no geometry. The
+log then has a line `!! 60 frames with no geometry: mode ..., lvl ..., p ..., f ...` with the same state.
 
 A native crash writes a self-contained block into the log before the system takes the process:
 
@@ -172,6 +188,7 @@ A native crash writes a self-contained block into the log before the system take
 ---- native crash: signal 11 at 0x77f6e45010, thread 12345 ----
      fault: outside the loaded modules (no module: heap, stack or unmapped)
      state: game, screen 2, pause 0, rss 214 MB, snd 6 voices / 0 underruns, music bgm/m_stage1.adp
+     game: mode 1 lvl dv1 p 1234,300 f 510, 152 quads
   #00 0x752dfd2ab4  libc.so+0x9cab4
   #01 0x78dc3a7004  libfpdc.so+0x1a7004
   ...

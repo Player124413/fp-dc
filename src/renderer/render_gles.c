@@ -551,6 +551,9 @@ int r_pal_load(const void *data, size_t size) {
     return 0;
 }
 
+/* geometry the game pushed into the frame that was just drawn: 0 means the picture is a bare clear */
+int rgl_quad_count(void) { return rgl_quads; }
+
 void r_begin(void) {
     rgl_drawcalls = 0;
     rgl_quads = 0;
@@ -568,13 +571,17 @@ void r_begin(void) {
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glViewport(0, 0, VIEW_W, VIEW_H);
         vsx = vsy = 1; vox = voy = 0;
+        glClearColor(0, 0, 0, 1);
     } else {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, win_w, win_h);
         view_transform(&vsx, &vsy, &vox, &voy);
         /* direct drawing has no finished frame to smear into the bars, so they get a dark matte
-         * instead of black */
+         * instead of black.  The clear colour is process-wide state that the shell's ui_clear() also
+         * sets, so every branch has to set it: in FILL mode (no letterbox) the game used to clear with
+         * whatever the launcher left behind -- a navy blue backdrop around the picture. */
         if (opt_letterbox) glClearColor(0.055f, 0.062f, 0.078f, 1.0f);
+        else glClearColor(0, 0, 0, 1);
     }
     glClear(GL_COLOR_BUFFER_BIT);
 }

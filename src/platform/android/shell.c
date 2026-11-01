@@ -11,6 +11,7 @@
 #define SETTINGS_FILE "port.txt"
 
 static int s_screen = SCREEN_HOME;
+static int s_blank;                    /* the engine drew nothing: overlay_frame() shows the banner */
 static int s_in_game, s_editor, s_launch, s_exit, s_starting, s_pause;
 static int s_ticks;
 static int s_w = 1280, s_h = 720;
@@ -181,6 +182,8 @@ static void pause_draw(void) {
     if (w_button(ID_PAUSE + 4, bx, by, bw, bh, "EXIT TO LAUNCHER", W_DANGER, 1)) shell_request_exit();
 }
 
+void shell_set_blank_hint(int on) { s_blank = on ? 1 : 0; }   /* set by the platform loop each frame */
+
 /* ------------------------------------------------------------------ frames */
 static void overlay_frame(float dt) {
     ui_begin(s_w, s_h, s_dp);                          /* on top of the game picture: never clear here */
@@ -189,6 +192,16 @@ static void overlay_frame(float dt) {
     else {
         pad_draw(touch_layout(), touch_active_controls(), 255);
         if (s_pause) pause_draw();
+        if (s_blank) {
+            /* the engine ran a frame and pushed no geometry at all: the picture is a bare clear.  That
+             * is never normal in game (even a fade to black draws its dimmer), so it is worth a banner
+             * instead of a silent black screen. */
+            const char *t = "NO PICTURE - REPORT IT (COPY LOG)";
+            float px = ui_dp(1.1f), w = ui_text_w(px, t);
+            float x = ((float)ui_w() - w) * 0.5f, y = ui_dp(6);
+            ui_rect(x - ui_dp(7), y - ui_dp(4), w + ui_dp(14), UI_TEXT_H(px) + ui_dp(8), 0xd0300808);
+            ui_text(x, y, px, 0xffffd6d6, t);
+        }
         if (shell_get_int("sys.showfps", 0)) {
             char b[32];
             snprintf(b, sizeof b, "%d FPS", (int)(s_fps + 0.5f));

@@ -12,6 +12,7 @@ enum {
 
 int  rgl_init(void);                       /* needs a current GLES3 context and a window size */
 void rgl_resize(int w, int h);             /* window pixels (surface changed / rotation) */
+int  rgl_quad_count(void);                 /* geometry the last drawn frame pushed (0 = a bare clear) */
 void rgl_present(void);                    /* after r_end(): FBO upscale, scanlines, swap is the platform's */
 void rgl_shutdown(void);
 /* presentation settings, read from port.txt by the platform every frame (cheap, idempotent) */

@@ -61,6 +61,7 @@ void  shell_touch(int phase, int id, float x, float y);   /* 0 down, 1 move, 2 u
 int   shell_take_launch(void);                       /* 1 once: the platform starts the engine */
 int   shell_take_exit(void);                         /* 1 once: the platform stops the engine */
 void  shell_request_exit(void);                      /* the pause menu asked to go back to the launcher */
+void  shell_set_blank_hint(int on);                  /* the engine drew nothing: say it on screen */
 int   shell_game_paused(void);                       /* 1: the pause menu or the editor is up, skip game_update */
 /* the in-game pause menu (BACK in game): RESUME / CONTROLS / SHARE LOG / COPY LOG / EXIT */
 int   shell_pause(void);

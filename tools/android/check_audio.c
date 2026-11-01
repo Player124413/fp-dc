@@ -11,9 +11,12 @@
  * This test links the real snd_android.c (its statics are reachable from the same translation unit)
  * against a fake AAudio that counts streams, so all of that is pinned where no phone is needed.
  */
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <math.h>
 #include <stdarg.h>
 
@@ -65,7 +68,8 @@ aaudio_result_t AAudioStream_close(AAudioStream *s) { (void)s; close_calls++; re
 
 void plat_log(const char *fmt, ...) { (void)fmt; }                    /* keep the test's output clean */
 void *plat_load_file(const char *name, size_t *size) { (void)name; if (size) *size = 0; return NULL; }
-const char *plat_data_root(void) { return "/nonexistent"; }
+static const char *data_root = "/nonexistent";                        /* check_music_requests() points it at a temp dir */
+const char *plat_data_root(void) { return data_root; }
 const char *plat_files_root(void) { return "/nonexistent"; }
 uint64_t plat_time_us(void) { static uint64_t t; return t += 1000; }
 
@@ -220,6 +224,55 @@ static void check_adpcm_layouts(void) {
     if (secpcm[31999 * 2] == 0 && secpcm[32000 * 2 - 1] == 0) fail("a second of ADPCM did not fill 32000 frames");
 }
 
+
+/* A track change while the worker is opening a file must not deadlock: the worker drops the older
+ * request, takes the newer one, and the mixer keeps running.  A named pipe makes the open block for
+ * sure, so the race is not a matter of timing.
+ *
+ * Why it matters on a phone: the request block unlocks around fopen() and takes the lock again, so the
+ * `continue` back to the top of the loop has to release it first -- a second lock of a mutex this
+ * thread owns leaves the worker holding mus_lock for ever, the audio callback waiting on it while it
+ * holds mix_lock, and the main thread (snd_master, every frame) waiting on mix_lock: a frozen app. */
+static void test_timeout(int sig) { (void)sig; printf("  FAIL never finished: the music worker is stuck\n"); _exit(1); }
+
+static void check_music_requests(void) {
+    char dir[] = "/tmp/fpdc_snd_XXXXXX";
+    if (!mkdtemp(dir)) { fail("mkdtemp"); return; }
+    char bgm[256], slow[300], fast[300];
+    snprintf(bgm, sizeof bgm, "%s/bgm", dir);
+    snprintf(slow, sizeof slow, "%s/slow.adp", bgm);
+    snprintf(fast, sizeof fast, "%s/fast.adp", bgm);
+    mkdir(bgm, 0700);
+    if (mkfifo(slow, 0600) != 0) { fail("mkfifo"); return; }
+    FILE *f = fopen(fast, "wb");
+    if (!f) { fail("the second track's file"); return; }
+    for (int i = 0; i < 4096; i++) fputc(0x11, f);           /* any ADPCM payload */
+    fclose(f);
+
+    data_root = dir;
+    if (snd_init_state() < 0) { fail("the fake audio stream did not start"); return; }
+    mus_stop_flag = 0;               /* a previous snd_stop_mixer() left it set: this is a new run */
+    if (music_play("bgm/slow.adp") != 0) fail("music_play on a running mixer");
+
+    /* the worker locks, sees the request, unlocks and blocks in fopen() on the pipe */
+    usleep(150000);
+    if (music_play("bgm/fast.adp") != 0) fail("the second music_play");
+    FILE *writer = fopen(slow, "wb");                        /* let the blocked open return */
+    if (!writer) fail("opening the pipe for writing");
+
+    int waited = 0;
+    while (waited < 3000 && strcmp(mus_name, "bgm/fast.adp")) { usleep(10000); waited += 10; }
+    if (strcmp(mus_name, "bgm/fast.adp"))
+        fail("after a request during an open the worker plays '%s', not the newer track", mus_name);
+
+    music_stop();
+    if (writer) fclose(writer);
+    for (int i = 0; i < MAX_SND; i++) { smp[i].pcm = NULL; smp[i].used = 0; }   /* earlier tests point at statics */
+    snd_stop_mixer();
+    data_root = "/nonexistent";
+    unlink(slow); unlink(fast); rmdir(bgm); rmdir(dir);
+}
+
 int main(void) {
     printf("audio checks\n");
     check_stream_lifetime();
@@ -227,6 +280,10 @@ int main(void) {
     check_voice_tempo();
     check_loop_voices_are_not_stolen();
     check_adpcm_layouts();
+    signal(SIGALRM, test_timeout);
+    alarm(10);                       /* a deadlocked worker would otherwise hang the whole check */
+    check_music_requests();
+    alarm(0);
     printf("audio %s\n", fails ? "FAILED" : "ok");
     return fails ? 1 : 0;
 }

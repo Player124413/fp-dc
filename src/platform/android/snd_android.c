@@ -448,6 +448,10 @@ static void *mus_worker(void *arg) {
                 pthread_mutex_lock(&mus_lock);
                 if (mus_req_kind) {                   /* a newer request came in while the file opened */
                     if (nf) fclose(nf);
+                    /* drop this one and let the loop take the newer one.  The lock must be released
+                     * first: the top of the loop takes it again, and a second lock of a mutex this
+                     * thread already owns is a deadlock (the audio callback would wait for ever) */
+                    pthread_mutex_unlock(&mus_lock);
                     continue;
                 }
                 if (nf) {

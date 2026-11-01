@@ -162,6 +162,14 @@ static int proc_rss_mb(void) {
     return (int)(rss * (unsigned long)(sysconf(_SC_PAGESIZE) / 1024) / 1024);
 }
 
+/* What the engine is doing, for a report: the mode and the level decide what should be on screen, and
+ * a player coordinate of nan or a level that never loaded is the difference between "the port cannot
+ * draw" and "the game was told to draw nothing".  G is the game's own state (fp.h). */
+static void game_brief(char *b, int cap) {
+    snprintf(b, cap, "mode %d lvl %s p %.0f,%.0f f %d", (int)G.mode, G.lvdir[0] ? G.lvdir : "-",
+             (double)G.p.x, (double)G.p.y, G.frame);
+}
+
 /* A native crash cannot say goodbye, and the Java handler only sees Java exceptions: this writes the
  * signal and a backtrace into the same fpdc.log, which is what a report needs.
  *
@@ -245,12 +253,15 @@ static void crash_handler(int sig, siginfo_t *info, void *ctx) {
       else   n = snprintf(buf, sizeof buf, "     fault: %s (no module: heap, stack or unmapped)\n",
                           faddr ? "outside the loaded modules" : "null");
       crash_write(buf, n); }
-    { char music[64];
+    { char music[64], gs[80];
       snd_music_name(music, sizeof music);
+      game_brief(gs, sizeof gs);
       n = snprintf(buf, sizeof buf,
-                   "     state: %s, screen %d, pause %d, rss %d MB, snd %d voices / %d underruns, music %s\n",
+                   "     state: %s, screen %d, pause %d, rss %d MB, snd %d voices / %d underruns, music %s\n"
+                   "     game: %s, %d quads\n",
                    shell_in_game() ? "game" : "launcher", shell_screen(), shell_game_paused(),
-                   proc_rss_mb(), snd_active_voices(), snd_underruns(), music[0] ? music : "-");
+                   proc_rss_mb(), snd_active_voices(), snd_underruns(), music[0] ? music : "-",
+                   gs, rgl_quad_count());
       crash_write(buf, n); }
 
     for (int i = 0; i < bt.n; i++) {
@@ -542,14 +553,24 @@ int shell_file_read(const char *name, char *buf, int cap) {
     return n;
 }
 
+/* Write a file the shell owns (the settings).  Through a temporary file and a rename, because the old
+ * one was truncated in place: a crash or a kill during the write (this port has had native crashes)
+ * left port.txt empty or cut in half, and every setting fell back to its default -- a pad that
+ * suddenly has a stick instead of the D-pad the player configured, a render mode nobody chose. */
 int shell_file_write(const char *name, const char *data, int len) {
-    char path[700];
+    char path[700], tmp[720];
     snprintf(path, sizeof path, "%s/%s", dir_files, name);
-    FILE *f = fopen(path, "wb");
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "wb");
     if (!f) { shell_log("cannot write %s", path); return 0; }
     int n = (int)fwrite(data, 1, (size_t)len, f);
-    fflush(f);
-    fclose(f);
+    int flush_ok = fflush(f) == 0;
+    if (fclose(f) != 0) flush_ok = 0;
+    if (!flush_ok || n != len || rename(tmp, path) != 0) {
+        remove(tmp);                    /* the previous file stays: a half-written settings file is worse */
+        shell_log("cannot replace %s", path);
+        return 0;
+    }
     return n;
 }
 
@@ -928,6 +949,7 @@ void android_main(struct android_app *app) {
     uint64_t tprev = plat_time_us();
     double acc = 0;
     int ticks = 0;
+    int blank_frames = 0;                     /* consecutive drawn frames with no geometry at all */
     uint32_t pad_prev = 0;
 
     while (!s_stop) {
@@ -1013,6 +1035,18 @@ void android_main(struct android_app *app) {
             } else {
                 apply_settings();
                 game_draw();          /* ends in r_end() -> frame_end_hook() -> present + swap */
+                /* A frame with no geometry in game is a bare clear, never a real picture (even a fade
+                 * draws its dimmer).  Say it once in the log with the state that decides what should
+                 * be drawn, and show the banner, so "the screen is black" carries its own evidence. */
+                if (loading_is_active()) blank_frames = 0;
+                else if (!rgl_quad_count()) { if (blank_frames < 100000) blank_frames++; }
+                else blank_frames = 0;
+                if (blank_frames == 60) {
+                    char gs[80];
+                    game_brief(gs, sizeof gs);
+                    plat_log("!! 60 frames with no geometry: %s, window %dx%d", gs, win_w, win_h);
+                }
+                shell_set_blank_hint(blank_frames >= 60);
             }
         }
 
@@ -1024,11 +1058,13 @@ void android_main(struct android_app *app) {
             char music[64];
             snd_music_name(music, sizeof music);
             const char *mbase = strrchr(music, '/');
+            char gs[80];
+            game_brief(gs, sizeof gs);
             plat_log("frame %u: win %dx%d dp %.2f ui %dx%d, %d quads + %d sdf in %d calls, glerr 0x%x, "
-                     "%s, rss %d MB, snd %d voices/%d underruns %s",
+                     "%s (%s, game %d quads), rss %d MB, snd %d voices/%d underruns %s",
                      ticks, win_w, win_h, (double)dp_scale, ui_w(), ui_h(), q, sdf, fl, (unsigned)err,
-                     shell_active() ? "launcher" : "game", proc_rss_mb(), snd_active_voices(),
-                     snd_underruns(), music[0] ? (mbase ? mbase + 1 : music) : "-");
+                     shell_active() ? "launcher" : "game", gs, rgl_quad_count(), proc_rss_mb(),
+                     snd_active_voices(), snd_underruns(), music[0] ? (mbase ? mbase + 1 : music) : "-");
         }
 
         if (want_exit) {
