@@ -800,6 +800,7 @@ void android_main(struct android_app *app) {
         if (acc > 1.0 / 60.0) acc = 1.0 / 60.0;
         if (!steps) { usleep(200); continue; }      /* a 90/120 Hz panel: nothing is due */
 
+        snd_recover();                              /* lost stream, delivery rate (cheap) */
         if (back_key) { back_key = 0; do_back(); }
 
         if (want_quit) { want_quit = 0; engine_stop(); }

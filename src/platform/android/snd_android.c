@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include "snd_android.h"
 #include "plat_android.h"
+#include "aica_adpcm.h"
 #include "../../fp.h"
 
 #define MAX_SND 768
@@ -48,6 +49,7 @@ typedef struct {
     uint32_t step;                     /* 16.16 source frames per output frame */
     int32_t gl, gr;                    /* mixing gains (vol * pan * master) */
     int vol, pan;
+    int freq;                          /* the AICA FREQ argument in Hz (0/<=1000: the sample's own rate) */
     int loop;
     int on;
     int serial;
@@ -55,48 +57,15 @@ typedef struct {
 
 static voice_t vox[MAX_VOICES];
 static int voice_serial;
+/* The callback mixes while the game thread starts voices, stops them and frees sample memory
+ * (snd_unload, snd_free_all): without this, a freed sample could still be read, and a voice could be
+ * half-started.  Held for the length of one mix (~4 ms) and for the tiny mutations on the game side. */
+static pthread_mutex_t mix_lock = PTHREAD_MUTEX_INITIALIZER;
 static int out_rate = 48000;
 static int master_music = 80, master_sfx = 90;
 static int underruns;
 
-/* ------------------------------------------------------------------ ADPCM */
-/* AICA / YMZ280B 4-bit step, the same arithmetic as third_party/wav2adpcm (ymz_step) */
-static const int step_table[8] = { 230, 230, 230, 230, 307, 409, 512, 614 };
-
-static inline int16_t ymz_step(int step, int *history, int *step_size) {
-    int sign = step & 8, delta = step & 7;
-    int diff = ((1 + (delta << 1)) * *step_size) >> 3;
-    int newval = *history;
-    int nstep = (step_table[delta] * *step_size) >> 8;
-    if (diff > 32767) diff = 32767;
-    if (diff < 0) diff = 0;
-    if (sign) newval -= diff;
-    else newval += diff;
-    if (nstep < 127) nstep = 127;
-    if (nstep > 24576) nstep = 24576;
-    *step_size = nstep;
-    if (newval > 32767) newval = 32767;
-    if (newval < -32768) newval = -32768;
-    *history = newval;
-    return (int16_t)newval;
-}
-
-/* one channel of a 4-bit stream: low nibble first, as wav2adpcm writes it */
-static void adpcm_decode_mono(const uint8_t *in, int bytes, int16_t *out) {
-    int hist = 0, sz = 127;
-    for (int i = 0; i < bytes * 2; i++) {
-        int8_t b = (int8_t)(in[i >> 1] << ((i & 1) * 4));
-        out[i] = ymz_step((b >> 4) & 15, &hist, &sz);
-    }
-}
-
-/* stereo interleaved ADPCM (one byte holds both channels: high nibble left, low nibble right) */
-static void adpcm_decode_stereo(const uint8_t *in, int bytes, int16_t *out, int *hist, int *step) {
-    for (int i = 0; i < bytes; i++) {
-        out[i * 2 + 0] = ymz_step((in[i] >> 4) & 15, &hist[0], &step[0]);
-        out[i * 2 + 1] = ymz_step(in[i] & 15, &hist[1], &step[1]);
-    }
-}
+/* the AICA step function and the two stream layouts: aica_adpcm.h (pinned by tools/android/check_audio.c) */
 
 /* ------------------------------------------------------------------ WAV (KOS sfx) */
 static uint32_t rd32(const uint8_t *p) { return (uint32_t)(p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24)); }
@@ -128,7 +97,7 @@ static int load_wav(const char *name, const uint8_t *d, size_t size, snd_t *out)
         frames = (int)pcm_bytes * 2;
         outp = malloc((size_t)frames * 2);
         if (!outp) return -1;
-        adpcm_decode_mono(pcm, (int)pcm_bytes, outp);
+        aica_decode_mono(pcm, (int)pcm_bytes, outp);
     } else if (fmt == 0x01 && bits == 16) {             /* PCM16 (the gallery voices) */
         int step_ch = ch > 0 ? ch : 1;
         frames = (int)(pcm_bytes / (size_t)(2 * step_ch));
@@ -150,11 +119,17 @@ static int load_wav(const char *name, const uint8_t *d, size_t size, snd_t *out)
 /* ------------------------------------------------------------------ AAudio */
 static AAudioStream *stream;
 static int snd_suspended;
+static volatile int stream_dead;          /* the error callback: the device took the stream away */
+static volatile long long cb_frames;       /* frames delivered, for the one-time rate check */
+static volatile uint64_t cb_t0;
+static int rate_settled;
 
 static void mix(int16_t *dst, int frames);
 
 static aaudio_data_callback_result_t audio_cb(AAudioStream *s, void *ud, void *data, int32_t frames) {
     (void)s; (void)ud;
+    if (!cb_t0) cb_t0 = plat_time_us();
+    cb_frames += frames;
     if (snd_suspended) {
         memset(data, 0, (size_t)frames * 4);
         return AAUDIO_CALLBACK_RESULT_CONTINUE;
@@ -166,9 +141,22 @@ static aaudio_data_callback_result_t audio_cb(AAudioStream *s, void *ud, void *d
 static void audio_error(AAudioStream *s, void *ud, aaudio_result_t err) {
     (void)s; (void)ud;
     plat_log("snd: AAudio error %d\n", (int)err);
+    stream_dead = 1;                       /* rebuilt by snd_recover() on the game thread */
+}
+
+static void stream_close(void) {
+    if (!stream) return;
+    AAudioStream_requestStop(stream);
+    AAudioStream_close(stream);
+    stream = NULL;
+    plat_log("snd: stream closed");
 }
 
 int snd_init_state(void) {
+    /* One stream only.  engine_start() runs on every PLAY, and opening a second stream left the first
+     * one playing as well: two callbacks mixing the same rings and voices, so the music ran at double
+     * tempo and starved the ring every few seconds (fast, silence, fast again). */
+    if (stream) return 0;
     AAudioStreamBuilder *b = NULL;
     if (AAudio_createStreamBuilder(&b) != AAUDIO_OK) return -1;
     AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_OUTPUT);
@@ -198,6 +186,10 @@ int snd_init_state(void) {
         stream = NULL;
         return -1;
     }
+    stream_dead = 0;
+    rate_settled = 0;
+    cb_t0 = 0;
+    cb_frames = 0;
     plat_log("snd: AAudio %d Hz, %d frames/burst (~%d us)\n", out_rate,
              (int)AAudioStream_getFramesPerBurst(stream),
              (int)AAudioStream_getFramesPerBurst(stream) * 1000000 / out_rate);
@@ -206,6 +198,7 @@ int snd_init_state(void) {
 
 void snd_suspend(void) {
     snd_suspended = 1;
+    cb_t0 = 0;                             /* a pause is not part of the delivery rate */
     if (stream) AAudioStream_requestPause(stream);
 }
 void snd_resume(void) {
@@ -220,6 +213,15 @@ int snd_active_voices(void) {
     return n;
 }
 int snd_underruns(void) { return underruns; }
+
+/* source frames per output frame, 16.16: the sample's rate times the requested pitch over the device
+ * rate.  Recomputed whenever the device rate turns out to be something else than it claimed. */
+static void voice_step(voice_t *o) {
+    if (!o->s) { o->step = 0x10000; return; }
+    double pitch = o->freq > 1000 ? (double)o->freq / 22050.0 : 1.0;   /* the AICA FREQ argument, in Hz */
+    o->step = (uint32_t)((double)o->s->rate * pitch / (double)out_rate * 65536.0);
+    if (o->step == 0) o->step = 0x10000;
+}
 
 static void voice_gain(voice_t *o) {
     int vol = o->vol, pan = o->pan;
@@ -238,7 +240,9 @@ void snd_master(int music_pct, int sfx_pct) {
     if (sfx_pct > 100) sfx_pct = 100;
     master_music = music_pct;
     master_sfx = sfx_pct;
+    pthread_mutex_lock(&mix_lock);
     for (int i = 0; i < MAX_VOICES; i++) if (vox[i].on && vox[i].s) voice_gain(&vox[i]);
+    pthread_mutex_unlock(&mix_lock);
 }
 
 /* ------------------------------------------------------------------ sound effects */
@@ -266,11 +270,13 @@ int snd_load(const char *name) {
 
 void snd_unload(int h) {
     if (h < 0 || h >= nsmp || !smp[h].used) return;
+    pthread_mutex_lock(&mix_lock);
     for (int i = 0; i < MAX_VOICES; i++)
         if (vox[i].on && vox[i].s == &smp[h]) vox[i].on = 0;
     free(smp[h].pcm);
     smp[h].pcm = NULL;
     smp[h].used = 0;
+    pthread_mutex_unlock(&mix_lock);
 }
 
 int snd_mem_free_kb(void) {
@@ -293,18 +299,19 @@ static int voice_alloc(void) {
 
 static void voice_start(int v, int h, int vol, int pan, int loop, int rate_hz) {
     if (v < 0 || h < 0 || h >= nsmp || !smp[h].used) return;
+    pthread_mutex_lock(&mix_lock);
     voice_t *o = &vox[v];
     o->s = &smp[h];
     o->pos = 0;
-    double pitch = rate_hz > 1000 ? (double)rate_hz / 22050.0 : 1.0;   /* the AICA FREQ argument, in Hz */
-    o->step = (uint32_t)((double)(o->s->rate) * pitch / (double)out_rate * 65536.0);
-    if (o->step == 0) o->step = 0x10000;
+    o->freq = rate_hz;
+    voice_step(o);
     o->vol = vol;
     o->pan = pan;
     o->loop = loop;
     o->on = 1;
     o->serial = ++voice_serial;
     voice_gain(o);
+    pthread_mutex_unlock(&mix_lock);
 }
 
 void snd_play(int h, int vol, int pan) {
@@ -323,28 +330,35 @@ int snd_loop_start(int h, int vol, int freq) {
 
 void snd_loop_set(int ch, int vol, int freq) {
     if (ch < 0 || ch >= MAX_VOICES || !vox[ch].on) return;
+    pthread_mutex_lock(&mix_lock);
     vox[ch].vol = vol < 0 ? 0 : vol > 255 ? 255 : vol;
-    if (freq > 1000 && vox[ch].s)
-        vox[ch].step = (uint32_t)((double)vox[ch].s->rate * ((double)freq / 22050.0) / (double)out_rate * 65536.0);
+    if (freq > 1000) { vox[ch].freq = freq; voice_step(&vox[ch]); }
     voice_gain(&vox[ch]);
+    pthread_mutex_unlock(&mix_lock);
 }
 
 void snd_loop_end(int ch) {
+    pthread_mutex_lock(&mix_lock);
     if (ch >= 0 && ch < MAX_VOICES) vox[ch].on = 0;
+    pthread_mutex_unlock(&mix_lock);
 }
 
 void snd_stop_all(void) {
+    pthread_mutex_lock(&mix_lock);
     for (int i = 0; i < MAX_VOICES; i++) vox[i].on = 0;
+    pthread_mutex_unlock(&mix_lock);
 }
 
 void snd_free_all(void) {
     snd_stop_all();
+    pthread_mutex_lock(&mix_lock);
     for (int i = 0; i < nsmp; i++) {
         if (!smp[i].used) continue;
         free(smp[i].pcm);
         smp[i].pcm = NULL;
         smp[i].used = 0;
     }
+    pthread_mutex_unlock(&mix_lock);
 }
 
 /* ------------------------------------------------------------------ music stream
@@ -405,6 +419,7 @@ static void *mus_worker(void *arg) {
                     snprintf(mus_name, sizeof mus_name, "%s", mus_req);
                     mus_pcm_stream = strstr(mus_req, ".pcm") != NULL;   /* the DC port played both */
                     mus_rate = mus_pcm_stream ? 22050 : MUS_RATE;
+                    plat_log("snd: music %s, %d Hz stereo -> %d Hz", mus_req, mus_rate, out_rate);
                 } else {
                     plat_log("music missing %s\n", path);
                     mus_name[0] = 0;
@@ -459,7 +474,7 @@ static void *mus_worker(void *arg) {
             }
             frames /= 2;
         } else {
-            adpcm_decode_stereo(buf, frames, pcm, mus_hist, mus_step_size);
+            aica_decode_stereo(buf, frames, pcm, mus_hist, mus_step_size);
         }
         int head = mus_head;
         for (int i = 0; i < frames; i++) {
@@ -499,11 +514,7 @@ void snd_stop_mixer(void) {
         pthread_join(mus_thread, NULL);
         mus_thread_ok = 0;
     }
-    if (stream) {
-        AAudioStream_requestStop(stream);
-        AAudioStream_close(stream);
-        stream = NULL;
-    }
+    stream_close();
     snd_free_all();
 }
 
@@ -531,6 +542,7 @@ void music_update(void) {}
 
 /* ------------------------------------------------------------------ the mixer */
 static void mix(int16_t *dst, int frames) {
+    pthread_mutex_lock(&mix_lock);
     pthread_mutex_lock(&mus_lock);
     int music_on = mus_f && !mus_paused;
     int head = mus_head, tail = mus_tail;
@@ -542,7 +554,10 @@ static void mix(int16_t *dst, int frames) {
     pthread_mutex_lock(&mus_lock);
     int src_rate = mus_rate;
     pthread_mutex_unlock(&mus_lock);
-    const double src_step = (double)out_rate / (double)(src_rate > 1000 ? src_rate : MUS_RATE);
+    /* source frames per output frame: 0.667 for a 32 kHz stream on a 48 kHz device.  It used to be the
+     * inverse (1.5), so the ring was drained 2.25x faster than the worker filled it: the music ran
+     * fast, the ring starved, the worker refilled it and off it went again. */
+    const double src_step = (double)(src_rate > 1000 ? src_rate : MUS_RATE) / (double)out_rate;
     const int32_t mg = mus_vol * master_music / 100;               /* 0..255 */
     int consumed = 0;
     int starve = 0;
@@ -561,6 +576,13 @@ static void mix(int16_t *dst, int frames) {
                 else { o->on = 0; continue; }
             }
             int32_t s = o->s->pcm[idx];
+            int nxt = idx + 1;
+            if (nxt < o->s->frames) {                 /* linear between the two source frames: the
+                                                       * hardware's DAC smoothed them, a bare nearest
+                                                       * read sounds harsh at 22 kHz into 48 kHz */
+                int32_t f = (o->pos >> 8) & 0xff;
+                s += (int32_t)(((int64_t)(o->s->pcm[nxt] - s) * f) >> 8);
+            }
             l += s * o->gl >> 8;
             r += s * o->gr >> 8;
             o->pos += (int)o->step;
@@ -597,4 +619,42 @@ static void mix(int16_t *dst, int frames) {
         pthread_mutex_unlock(&mus_lock);
     }
     if (starve && music_on) underruns++;
+    pthread_mutex_unlock(&mix_lock);
+}
+
+/* ------------------------------------------------------------------ the game thread's audio upkeep
+ * Called once per iteration of the main loop (launcher and game alike):
+ *   - a stream the device took away (route change, other app grabbing the output) is rebuilt; AAudio
+ *     only reports that through the error callback, and a dead stream is silent for good otherwise;
+ *   - the delivery rate is measured once over four seconds.  Every rate in this file comes from
+ *     AAudioStream_getSampleRate(), and a phone that delivers another rate than it reports would make
+ *     the music drift (fast for a while, then the ring starves) -- the tempo and the voices follow the
+ *     measured rate instead of the claimed one.
+ */
+void snd_recover(void) {
+    if (stream_dead) {
+        plat_log("snd: the output device disconnected, rebuilding the stream");
+        stream_close();
+        stream_dead = 0;
+        rate_settled = 0;
+        cb_t0 = 0;
+        cb_frames = 0;
+        snd_init_state();
+        return;
+    }
+    if (rate_settled || !stream || snd_suspended || !cb_t0) return;
+    uint64_t dt = plat_time_us() - cb_t0;
+    if (dt < 4000000ull) return;
+    rate_settled = 1;
+    double meas = (double)cb_frames * 1000000.0 / (double)dt;
+    plat_log("snd: %.0f frames/s delivered, the stream reports %d Hz", meas, out_rate);
+    if (meas > 4000.0 && fabs(meas - (double)out_rate) > 0.02 * (double)out_rate) {
+        out_rate = (int)(meas + 0.5);
+        plat_log("snd: the device does not run at the rate it reports: resampling for %d Hz", out_rate);
+        pthread_mutex_lock(&mix_lock);
+        for (int i = 0; i < MAX_VOICES; i++) if (vox[i].on) voice_step(&vox[i]);
+        pthread_mutex_unlock(&mix_lock);
+    }
+    cb_t0 = 0;
+    cb_frames = 0;
 }

@@ -105,7 +105,16 @@ music), so the package is the Dreamcast `converted/` tree, unpacked.
 - The frame loop is a fixed 60 Hz accumulator: on a 90/120 Hz panel the game runs 60 update+draw pairs per
   second instead of double-stepping, and the 30 fps mode draws every other frame.
 - Sound effects are decoded once at load (0.1–3 s each); music is decoded by a worker thread into a 1 s ring
-  so the audio callback never touches the filesystem.
+  so the audio callback never touches the filesystem. AICA ADPCM is decoded in software with the hardware's
+  step function (`aica_adpcm.h`): one byte is one stereo frame (high nibble left), two nibbles are two mono
+  samples (low nibble first, as `wav2adpcm` packs them).
+- One AAudio stream for the whole app: `snd_init_state()` returns the running stream instead of opening a
+  second one (a second consumer of the same rings runs the music at double tempo and starves it). The
+  stream is rebuilt if the device takes it away, and the delivery rate is measured once after four seconds:
+  if a phone does not run at the rate it reports, the tempo follows the measured rate.
+- The tempo chain is the stream rate, the source rate (music 32 kHz, effects 22.05 kHz) and the step per
+  output frame; `tools/android/check_audio.c` pins it (a 0.1 s mix must consume 0.1 s of source), together
+  with the stream lifetime and the ADPCM layouts.
 
 ## Settings (`port.txt`, in the app's internal files dir)
 
