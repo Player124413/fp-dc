@@ -23,6 +23,8 @@ void stub_reset(void);
 void stub_set_data(int ok, long bytes);
 int  stub_vibrations(void);
 int  stub_launched(void);
+int  stub_log_copies(void);                          /* the platform stub counts COPY LOG / SAVE LOG */
+int  stub_log_saves(void);
 int  stub_screen_w(void), stub_screen_h(void);
 float stub_dp(void);
 
