@@ -21,8 +21,9 @@ enum { SCREEN_HOME = 0, SCREEN_SETTINGS, SCREEN_CONTROLS, SCREEN_ABOUT, SCREEN_D
 enum {
     ID_HOME = 0,        /* +0 PLAY, +1 CONTROLS, +2 SETTINGS, +3 ABOUT */
     ID_SET = 10,        /* +0 BACK, +10..+12 tabs, +20.. PICTURE, +30.. INPUT, +40.. SYSTEM */
-    ID_ABOUT = 60,      /* +1 SHARE LOG FILE */
-    ID_DATA = 70        /* +0 IMPORT */
+    ID_ABOUT = 60,      /* +1 SHARE LOG, +2 COPY LOG, +3 SAVE LOG */
+    ID_DATA = 70,       /* +0 IMPORT */
+    ID_PAUSE = 90       /* +0 RESUME, +1 CONTROLS, +2 SHARE LOG, +3 COPY LOG, +4 EXIT TO LAUNCHER */
 };
 
 /* ---------------------------------------------------------------- platform services */
@@ -42,9 +43,12 @@ void  shell_exit_app(void);
 const char *shell_build_version(void);
 /* device facts for the ABOUT / data screens (filled by the platform, may be empty) */
 void  shell_device_info(char *buf, int cap);
-/* the log file the player can send us (empty when the platform has none) and the share sheet */
+/* the log file the player can send us (empty when the platform has none): the share sheet, the
+ * clipboard (paste it into a chat), and a .txt in Downloads */
 const char *shell_log_file(void);
 void  shell_log_share(void);
+void  shell_log_copy(void);
+void  shell_log_save(void);
 
 /* ---------------------------------------------------------------- shell state */
 void  shell_set_screen(int w, int h, float dp_scale);   /* the platform reports the window each resize */
@@ -55,8 +59,12 @@ void  shell_draw_overlay(float dt);                  /* after the game picture: 
 int   shell_active(void);                            /* 1: the launcher owns the screen (engine not started) */
 void  shell_touch(int phase, int id, float x, float y);   /* 0 down, 1 move, 2 up (display pixels) */
 int   shell_take_launch(void);                       /* 1 once: the platform starts the engine */
-int   shell_take_exit(void);                         /* 1 once: the platform finishes the activity */
-int   shell_game_paused(void);                       /* 1: the in-game editor is open, skip game_update */
+int   shell_take_exit(void);                         /* 1 once: the platform stops the engine */
+void  shell_request_exit(void);                      /* the pause menu asked to go back to the launcher */
+int   shell_game_paused(void);                       /* 1: the pause menu or the editor is up, skip game_update */
+/* the in-game pause menu (BACK in game): RESUME / CONTROLS / SHARE LOG / COPY LOG / EXIT */
+int   shell_pause(void);
+void  shell_pause_open(int on);
 /* the game's input for this tick: touch pad + gamepad, edges included (the platform ORs the pad) */
 void  shell_game_input(input_t *in);
 void  shell_fps(float fps);                          /* the platform's measured frame rate (overlay) */

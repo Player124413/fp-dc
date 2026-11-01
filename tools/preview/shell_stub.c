@@ -19,10 +19,11 @@ static int vibrations;
 static int import_status;
 static const char *import_msg = "";
 static int launched, exited;
+static int copied, saved;              /* the log went to the clipboard / a .txt */
 
 void stub_reset(void) {
     data_ok = 1; data_bytes = 168L * 1024 * 1024; vibrations = 0; import_status = 0; import_msg = "";
-    launched = exited = 0;
+    launched = exited = 0; copied = saved = 0;
 }
 void stub_set_data(int ok, long bytes) { data_ok = ok; data_bytes = bytes; }
 int stub_vibrations(void) { return vibrations; }
@@ -49,7 +50,12 @@ int shell_data_ok(void) { return data_ok; }
 long shell_data_bytes(void) { return data_ok ? data_bytes : 0; }
 const char *shell_data_dir(void) { return "/sdcard/Android/data/com.fpdc.port/files/data"; }
 const char *shell_log_file(void) { return "out/fpdc.log"; }
+static int copied, saved;
 void shell_log_share(void) {}
+void shell_log_copy(void) { copied++; }
+void shell_log_save(void) { saved++; }
+int stub_log_copies(void) { return copied; }
+int stub_log_saves(void) { return saved; }
 void shell_data_import(void) {
     /* the preview pretends the user picked a valid package */
     import_status = 1;

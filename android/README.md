@@ -130,6 +130,14 @@ music), so the package is the Dreamcast `converted/` tree, unpacked.
 | `audio.music` / `audio.sfx` | 80 / 90 | master volumes (the game's own options still apply) |
 | `pad.*` | | the touch layout written by the editor |
 
+## Leaving the game
+
+In game, the hardware BACK button or the pad's gear opens the pause menu: RESUME, CONTROLS, SHARE LOG,
+COPY LOG, EXIT TO LAUNCHER. The menu freezes the game (`shell_game_paused()` also covers the controls
+editor) and EXIT stops the engine on the next tick -- `shell_request_exit()` from the menu,
+`shell_take_exit()` by the platform loop, then `engine_stop()` -- which drops back into the launcher with
+the data and the save intact.
+
 ## The log (what to send when something is wrong)
 
 Every line the port logs goes to `fpdc.log` twice: logcat (tag `fpdc`, `fpdc/ui`) and a file
@@ -138,6 +146,13 @@ Every line the port logs goes to `fpdc.log` twice: logcat (tag `fpdc`, `fpdc/ui`
 /sdcard/Android/data/com.fpdc.port/files/fpdc.log          <- the current session
 /sdcard/Android/data/com.fpdc.port/files/fpdc.prev.log     <- the session before it (a crash survives here)
 ```
+
+Three ways to get it out: **COPY LOG** (clipboard, paste it into the chat), **SHARE LOG** (any messenger or
+mail app) and **SAVE LOG AS .TXT** (Downloads), all on ABOUT and in the in-game pause menu. What they send is
+the *previous* session's tail followed by this one, because after a crash the session that died is the one in
+`fpdc.prev.log` -- a native crash (signal + `_Unwind_Backtrace` frames) and an uncaught Java exception both
+append themselves to it. `sys.sndtrace` (SETTINGS -> SYSTEM -> SOUND TRACE) logs every voice start, which is
+how a report about "extra sounds" says which sound it is.
 
 The file starts with the device, the Android API level, the window in pixels and dp, and the data folder, then
 one line per event with a relative timestamp, and every 150 frames a summary of what the renderer actually did

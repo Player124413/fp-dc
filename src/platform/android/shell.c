@@ -11,7 +11,7 @@
 #define SETTINGS_FILE "port.txt"
 
 static int s_screen = SCREEN_HOME;
-static int s_in_game, s_editor, s_launch, s_exit, s_starting;
+static int s_in_game, s_editor, s_launch, s_exit, s_starting, s_pause;
 static int s_ticks;
 static int s_w = 1280, s_h = 720;
 static float s_dp = 2.0f;
@@ -41,7 +41,7 @@ void shell_init(void) {
 
 void shell_reset(void) {
     s_screen = SCREEN_HOME;
-    s_in_game = s_editor = s_launch = s_exit = s_starting = 0;
+    s_in_game = s_editor = s_launch = s_exit = s_starting = s_pause = 0;
     s_ticks = 0;
     s_fps = 0;
     s_dirty = 0;
@@ -96,7 +96,7 @@ void shell_editor_open(int on) {
 void shell_set_in_game(int on) {
     s_in_game = on ? 1 : 0;
     s_starting = 0;
-    if (!s_in_game) { s_editor = 0; s_screen = SCREEN_HOME; }
+    if (!s_in_game) { s_editor = 0; s_pause = 0; s_screen = SCREEN_HOME; }
     touch_cancel();
     w_release_all();
 }
@@ -113,13 +113,28 @@ int shell_starting(void) { return s_starting; }
 
 int shell_take_launch(void) { int v = s_launch; s_launch = 0; return v; }
 int shell_take_exit(void) { int v = s_exit; s_exit = 0; return v; }
-int shell_game_paused(void) { return s_editor; }
+int shell_pause(void) { return s_pause; }
+void shell_pause_open(int on) {
+    s_pause = on ? 1 : 0;
+    if (s_pause) s_editor = 0;
+    touch_cancel();
+    w_release_all();
+}
+/* the pause menu asked to go back to the launcher: the platform stops the engine on the next tick */
+void shell_request_exit(void) {
+    shell_log("shell: EXIT TO LAUNCHER");
+    shell_pause_open(0);              /* the menu goes at once; the engine stops on the next tick */
+    s_exit = 1;
+}
+/* the game must not advance while a menu is up (the pause menu freezes the picture as well) */
+int shell_game_paused(void) { return s_editor || s_pause; }
 void shell_fps(float fps) { s_fps = fps; }
 
 /* ------------------------------------------------------------------ touch routing */
 void shell_touch(int phase, int id, float x, float y) {
     if (!s_loaded) shell_init();
     if (s_editor) { editor_touch(phase, id, x, y); return; }
+    if (s_pause) { w_touch(phase, id, x, y); return; }
     if (s_in_game) {
         if (phase == 0) touch_down(id, x, y);
         else if (phase == 1) touch_move(id, x, y);
@@ -132,14 +147,38 @@ void shell_touch(int phase, int id, float x, float y) {
 /* the game's input: the pad, with the gear opening the editor */
 void shell_game_input(input_t *in) {
     touch_frame();
-    if (touch_gear_edge()) {
-        s_editor = 1;
-        editor_open(1);
-        touch_cancel();
-    }
+    if (touch_gear_edge()) shell_pause_open(1);
     in->held = touch_held();
     in->pressed = touch_pressed();
     in->released = touch_released();
+}
+
+/* ------------------------------------------------------------------ pause menu
+ * BACK in game (and the pad's gear) opens this: the player needs a way back to the launcher, which the
+ * port did not have -- BACK opened the controls editor instead, and the only exit was killing the app.
+ * The game picture stays frozen behind a dim layer, so the menu reads as a pause rather than a screen. */
+static void pause_draw(void) {
+    float w = (float)ui_w(), h = (float)ui_h();
+    ui_rect(0, 0, w, h, 0xb4000000);
+    const int n = 5;
+    float bh = ui_dp(46), gap = ui_dp(10), top = ui_dp(46);
+    float pw = ui_is_wide() ? ui_dp(380) : w - ui_dp(48);
+    float ph = top + n * (bh + gap) + ui_dp(4);
+    float x = (w - pw) * 0.5f, y = (h - ph) * 0.5f;
+    ui_rrect(x, y, pw, ph, ui_dp(14), 0xf2101826);
+    ui_rrect_line(x, y, pw, ph, ui_dp(14), ui_dp(1), 0x662f6ea0);
+    ui_text(x + ui_dp(22), y + ui_dp(14), ui_dp(1.5f), 0xffe8f0ff, "PAUSED");
+    float bw = pw - ui_dp(44), bx = x + ui_dp(22), by = y + top;
+    int log_ok = shell_log_file()[0] != 0;
+    if (w_button(ID_PAUSE + 0, bx, by, bw, bh, "RESUME", W_PRIMARY, 1)) shell_pause_open(0);
+    by += bh + gap;
+    if (w_button(ID_PAUSE + 1, bx, by, bw, bh, "CONTROLS", W_GHOST, 1)) { shell_pause_open(0); shell_editor_open(1); }
+    by += bh + gap;
+    if (w_button(ID_PAUSE + 2, bx, by, bw, bh, "SHARE LOG", W_GHOST, log_ok)) shell_log_share();
+    by += bh + gap;
+    if (w_button(ID_PAUSE + 3, bx, by, bw, bh, "COPY LOG", W_GHOST, log_ok)) shell_log_copy();
+    by += bh + gap;
+    if (w_button(ID_PAUSE + 4, bx, by, bw, bh, "EXIT TO LAUNCHER", W_DANGER, 1)) shell_request_exit();
 }
 
 /* ------------------------------------------------------------------ frames */
@@ -149,6 +188,7 @@ static void overlay_frame(float dt) {
     if (s_editor) editor_draw(dt);
     else {
         pad_draw(touch_layout(), touch_active_controls(), 255);
+        if (s_pause) pause_draw();
         if (shell_get_int("sys.showfps", 0)) {
             char b[32];
             snprintf(b, sizeof b, "%d FPS", (int)(s_fps + 0.5f));

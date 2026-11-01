@@ -28,7 +28,7 @@
 #include "../../fp.h"
 
 #define MAX_SND 768
-#define MAX_VOICES 24
+#define MAX_VOICES 32                          /* the AICA had 64 channels; 32 is plenty and cheap */
 #define MUS_RATE 32000                 /* the ADPCM music stream (tools/audio/convert_audio.py) */
 #define MUS_RING 32000                 /* one second of stereo at the source rate */
 #define MUS_CHUNK 1024
@@ -52,6 +52,7 @@ typedef struct {
     int freq;                          /* the AICA FREQ argument in Hz (0/<=1000: the sample's own rate) */
     int loop;
     int on;
+    int reserved;                      /* a looping channel the game keeps a handle on: never stolen */
     int serial;
 } voice_t;
 
@@ -64,6 +65,9 @@ static pthread_mutex_t mix_lock = PTHREAD_MUTEX_INITIALIZER;
 static int out_rate = 48000;
 static int master_music = 80, master_sfx = 90;
 static int underruns;
+static int trace;                      /* sys.sndtrace: log every voice start, to answer "what sound is that?" */
+
+void snd_trace(int on) { trace = on ? 1 : 0; }
 
 /* the AICA step function and the two stream layouts: aica_adpcm.h (pinned by tools/android/check_audio.c) */
 
@@ -288,10 +292,15 @@ int snd_mem_free_kb(void) {
     return free_kb > 0 ? (int)free_kb : 0;
 }
 
+/* A free voice, else the oldest one-shot.  Voices the game holds a handle on (snd_loop_start: Carol's
+ * bike, the trolley, rain) are never stolen: stealing one meant the game's next snd_loop_update()
+ * retuned and re-volumed whatever unrelated sound had taken the slot, which is heard as random extra
+ * noises on top of the mix. */
 static int voice_alloc(void) {
     int best = -1, best_serial = 0x7fffffff;
     for (int i = 0; i < MAX_VOICES; i++) {
         if (!vox[i].on) return i;
+        if (vox[i].reserved) continue;
         if (vox[i].serial < best_serial) { best_serial = vox[i].serial; best = i; }   /* steal the oldest */
     }
     return best;
@@ -308,9 +317,12 @@ static void voice_start(int v, int h, int vol, int pan, int loop, int rate_hz) {
     o->vol = vol;
     o->pan = pan;
     o->loop = loop;
+    o->reserved = loop ? 1 : 0;
     o->on = 1;
     o->serial = ++voice_serial;
     voice_gain(o);
+    if (trace) plat_log("snd: play %s (slot %d) on voice %d, vol %d pan %d%s", o->s->name, h, v, vol, pan,
+                        loop ? " loop" : "");
     pthread_mutex_unlock(&mix_lock);
 }
 
@@ -339,13 +351,13 @@ void snd_loop_set(int ch, int vol, int freq) {
 
 void snd_loop_end(int ch) {
     pthread_mutex_lock(&mix_lock);
-    if (ch >= 0 && ch < MAX_VOICES) vox[ch].on = 0;
+    if (ch >= 0 && ch < MAX_VOICES) { vox[ch].on = 0; vox[ch].reserved = 0; }
     pthread_mutex_unlock(&mix_lock);
 }
 
 void snd_stop_all(void) {
     pthread_mutex_lock(&mix_lock);
-    for (int i = 0; i < MAX_VOICES; i++) vox[i].on = 0;
+    for (int i = 0; i < MAX_VOICES; i++) { vox[i].on = 0; vox[i].reserved = 0; }
     pthread_mutex_unlock(&mix_lock);
 }
 

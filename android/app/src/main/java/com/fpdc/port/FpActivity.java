@@ -88,6 +88,112 @@ public class FpActivity extends NativeActivity {
         });
     }
 
+    /** The tail of one file: that is the part worth sending. */
+    private String tailOf(File f, int max) throws Exception {
+        if (!f.isFile()) return null;
+        long len = f.length();
+        int take = (int) Math.min(len, max);
+        byte[] buf = new byte[take];
+        RandomAccessFile raf = new RandomAccessFile(f, "r");
+        raf.seek(len - take);
+        raf.readFully(buf);
+        raf.close();
+        return new String(buf, "UTF-8");
+    }
+
+    /** The log a report needs: the *previous* session first (after a crash that is the one that died --
+     *  the native handler writes the signal and a backtrace into it) and then this one. */
+    private String logText(String path, int max) {
+        try {
+            File cur = new File(path);
+            if (!cur.isFile()) return null;
+            StringBuilder sb = new StringBuilder();
+            File prev = new File(cur.getParentFile(), "fpdc.prev.log");
+            String p = tailOf(prev, Math.max(20000, max / 3));
+            if (p != null && p.length() > 0) {
+                sb.append("==== previous session, kept in fpdc.prev.log ====\n");
+                sb.append(p);
+                sb.append("\n==== this session ====\n");
+            }
+            sb.append(tailOf(cur, max));
+            return sb.toString();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** LOG -> COPY LOG: the log on the clipboard, so the player pastes it into a chat or a note. */
+    public void copyLog(final String path) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String text = logText(path, 400000);
+                    if (text == null) {
+                        toast("the log file is not there: " + path);
+                        return;
+                    }
+                    android.content.ClipboardManager cm =
+                            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    if (cm == null) {
+                        toast("this device has no clipboard");
+                        return;
+                    }
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText("fpdc log", text));
+                    toast("log copied (" + text.length() + " characters): paste it in the chat");
+                } catch (Exception e) {
+                    toast("cannot copy the log: " + e.getMessage());
+                }
+            }
+        });
+    }
+
+    /** LOG -> SAVE LOG: a real fpdc-log-<time>.txt in Downloads, for a file manager or a USB cable. */
+    public void saveLog(final String path) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    String text = logText(path, 2000000);
+                    if (text == null) {
+                        toast("the log file is not there: " + path);
+                        return;
+                    }
+                    String name = "fpdc-log-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+                            .format(new java.util.Date()) + ".txt";
+                    String where;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        android.content.ContentValues cv = new android.content.ContentValues();
+                        cv.put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name);
+                        cv.put(android.provider.MediaStore.Downloads.MIME_TYPE, "text/plain");
+                        cv.put(android.provider.MediaStore.Downloads.IS_PENDING, 1);
+                        android.net.Uri uri = getContentResolver()
+                                .insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
+                        if (uri == null) throw new Exception("Downloads is not writable");
+                        java.io.OutputStream os = getContentResolver().openOutputStream(uri);
+                        os.write(text.getBytes("UTF-8"));
+                        os.close();
+                        cv.clear();
+                        cv.put(android.provider.MediaStore.Downloads.IS_PENDING, 0);
+                        getContentResolver().update(uri, cv, null, null);
+                        where = "Downloads/" + name;
+                    } else {
+                        File dir = getExternalFilesDir(null);
+                        if (dir == null) dir = getFilesDir();
+                        File out = new File(dir, name);
+                        java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
+                        fos.write(text.getBytes("UTF-8"));
+                        fos.close();
+                        where = out.getAbsolutePath();
+                    }
+                    toast("log saved: " + where);
+                } catch (Exception e) {
+                    toast("cannot save the log: " + e.getMessage());
+                }
+            }
+        });
+    }
+
     /** ABOUT -> SHARE LOG FILE: the log as text, so any messenger or mail app can take it. The tail is what
      *  matters, and an intent must stay under the binder limit. */
     public void shareLog(final String path) {
@@ -95,19 +201,11 @@ public class FpActivity extends NativeActivity {
             @Override
             public void run() {
                 try {
-                    File f = new File(path);
-                    if (!f.isFile()) {
+                    String text = logText(path, 120000);
+                    if (text == null) {
                         toast("the log file is not there: " + path);
                         return;
                     }
-                    long len = f.length();
-                    int take = (int) Math.min(len, 120000);
-                    byte[] buf = new byte[take];
-                    RandomAccessFile raf = new RandomAccessFile(f, "r");
-                    raf.seek(len - take);
-                    raf.readFully(buf);
-                    raf.close();
-                    String text = new String(buf, "UTF-8");
                     Intent send = new Intent(Intent.ACTION_SEND);
                     send.setType("text/plain");
                     send.putExtra(Intent.EXTRA_SUBJECT, "fpdc log (" + android.os.Build.MODEL + ")");

@@ -184,6 +184,21 @@ static int find_widget(int id, float *cx, float *cy) {
     return 1;
 }
 
+/* a tap on an *overlay* widget: in game the shell draws through shell_draw_overlay(), not
+ * shell_frame() (which returns at once), so the click is consumed by the overlay frame */
+static void tap_overlay(int id, const char *what) {
+    float x = 0, y = 0;
+    if (!find_widget(id, &x, &y)) {
+        expect(0, what);
+        return;
+    }
+    shell_touch(0, 99, x, y);
+    shell_touch(2, 99, x, y);
+    begin_frame();
+    shell_draw_overlay(1.0f / 60.0f);
+    ui_end();
+}
+
 static void tap_widget(int id, const char *what) {
     float x = 0, y = 0;
     if (!find_widget(id, &x, &y)) {
@@ -268,6 +283,40 @@ static void scenario_selftest(void) {
         }
     }
 
+    /* in game: BACK opens the pause menu, and its buttons really do what they say */
+    {
+        float x, y;
+        scenario_begin();
+        shell_set_in_game(1);
+        shell_draw_overlay(1.0f / 60.0f);
+        shell_pause_open(1);
+        shell_draw_overlay(1.0f / 60.0f);
+        expect(shell_game_paused(), "the pause menu freezes the game");
+        expect(find_widget(ID_PAUSE + 0, &x, &y), "the pause menu shows RESUME");
+        tap_overlay(ID_PAUSE + 0, "RESUME is on screen");
+        expect(!shell_pause(), "RESUME closes the pause menu");
+        expect(!shell_game_paused(), "and the game runs again");
+
+        shell_pause_open(1);
+        shell_draw_overlay(1.0f / 60.0f);
+        tap_overlay(ID_PAUSE + 1, "CONTROLS is on screen");
+        expect(shell_editor(), "CONTROLS opens the editor from the pause menu");
+        expect(shell_game_paused(), "and the game stays frozen in the editor");
+        shell_editor_open(0);
+
+        shell_pause_open(1);
+        shell_draw_overlay(1.0f / 60.0f);
+        tap_overlay(ID_PAUSE + 3, "COPY LOG is on screen");
+        expect(stub_log_copies() == 1, "COPY LOG copies the log for the chat");
+
+        shell_pause_open(1);
+        shell_draw_overlay(1.0f / 60.0f);
+        tap_overlay(ID_PAUSE + 4, "EXIT TO LAUNCHER is on screen");
+        expect(!shell_pause(), "EXIT closes the pause menu");
+        expect(shell_take_exit() == 1, "EXIT asks the platform to stop the engine");
+        shell_set_in_game(0);
+    }
+
     /* the data screen: IMPORT is a button, not decoration */
     scenario_begin();
     shell_open(SCREEN_DATA);
@@ -292,6 +341,23 @@ static void scenario_ingame(void) {
         ui_end();
         dump("ingame");
     }
+}
+
+/* in game, BACK: the pause menu, which is also where EXIT TO LAUNCHER lives */
+static void scenario_pause(void) {
+    scenario_begin();
+    shell_set_in_game(1);
+    shell_pause_open(1);
+    for (frame_no = 0; frame_no < 6; frame_no++) {
+        begin_frame();
+        ui_vgrad(0, 0, (float)ui_w(), (float)ui_h(), 0xff12203c, 0xff060a14);
+        ui_circle(ui_dp(300), ui_dp(120), ui_dp(80), 0x224fd8ff);
+        shell_draw_overlay(1.0f / 60.0f);
+        ui_end();
+        dump("pause");
+    }
+    shell_pause_open(0);
+    shell_set_in_game(0);
 }
 
 static void scenario_pressed(void) {
@@ -330,7 +396,8 @@ int main(int argc, char **argv) {
     struct { const char *name; void (*fn)(void); } sc[] = {
         { "font", scenario_font },       { "home", scenario_home },     { "settings", scenario_settings },
         { "controls", scenario_controls }, { "editorkit", scenario_editor_touch }, { "ingame", scenario_ingame },
-        { "pressed", scenario_pressed }, { "data", scenario_data },       { "selftest", scenario_selftest },
+        { "pressed", scenario_pressed }, { "pause", scenario_pause },     { "data", scenario_data },
+        { "selftest", scenario_selftest },
     };
     int any = 0, all = argc == 2;
     for (int i = 2; i < argc; i++) if (!strcmp(argv[i], "all")) all = 1;

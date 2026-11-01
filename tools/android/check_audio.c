@@ -161,6 +161,33 @@ static void check_voice_tempo(void) {
     vox[0].on = 0;
 }
 
+/* a looping channel the game holds a handle on must survive a burst of effects: stealing it made the
+ * game's next snd_loop_update() retune an unrelated sound (heard as random extra noises) */
+static void check_loop_voices_are_not_stolen(void) {
+    static int16_t loop_pcm[4096], shot_pcm[512];
+    for (int i = 0; i < 4096; i++) loop_pcm[i] = (int16_t)(i * 31);
+    for (int i = 0; i < 512; i++) shot_pcm[i] = (int16_t)(i * 61);
+    for (int i = 0; i < MAX_SND; i++) smp[i].used = 0;
+    for (int i = 0; i < MAX_VOICES; i++) { vox[i].on = 0; vox[i].reserved = 0; }
+    nsmp = 2;
+    smp[0].pcm = loop_pcm; smp[0].frames = 4096; smp[0].rate = 22050; smp[0].used = 1;
+    snprintf(smp[0].name, sizeof smp[0].name, "loop");
+    smp[1].pcm = shot_pcm; smp[1].frames = 512; smp[1].rate = 22050; smp[1].used = 1;
+    snprintf(smp[1].name, sizeof smp[1].name, "shot");
+    mus_f = NULL;
+
+    int ch = snd_loop_start(0, 255, 0);
+    if (ch < 0) { fail("the looping channel did not start"); return; }
+    for (int k = 0; k < MAX_VOICES * 3; k++) snd_play(1, 255, 128);       /* more effects than voices */
+    if (!vox[ch].on) fail("a burst of effects stole the game's looping channel");
+    if (vox[ch].s != &smp[0]) fail("the looping channel now plays a different sample");
+    if (!vox[ch].reserved) fail("the loop lost its reservation");
+    snd_loop_end(ch);
+    if (vox[ch].reserved) fail("snd_loop_end left the voice reserved");
+    snd_stop_all();
+    for (int i = 0; i < MAX_VOICES; i++) if (vox[i].reserved) fail("voice %d still reserved after stop_all", i);
+}
+
 static void check_adpcm_layouts(void) {
     int16_t out[16];
     int hist[2] = { 0, 0 }, step[2] = { 127, 127 };
@@ -198,6 +225,7 @@ int main(void) {
     check_stream_lifetime();
     check_music_tempo();
     check_voice_tempo();
+    check_loop_voices_are_not_stolen();
     check_adpcm_layouts();
     printf("audio %s\n", fails ? "FAILED" : "ok");
     return fails ? 1 : 0;

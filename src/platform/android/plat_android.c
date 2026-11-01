@@ -35,6 +35,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <signal.h>
+#include <unwind.h>
 
 #include "../../fp.h"
 #include "../../renderer/render_gles.h"
@@ -116,6 +118,8 @@ static const char *device_name(void) {
     return name;
 }
 
+static void crash_handler_install(void);   /* writes the signal and a backtrace into the log */
+
 /* <files>/fpdc.log, with the previous run rotated to fpdc.prev.log */
 static void log_open(void) {
     if (log_fd >= 0 || !dir_files[0]) return;
@@ -135,6 +139,59 @@ static void log_open(void) {
                      shell_build_version(), device_name(), android_get_device_api_level(), win_w, win_h, (double)dp_scale,
                      win_w / (double)dp_scale, win_h / (double)dp_scale, dir_data);
     if (n > 0) { ssize_t w = write(log_fd, hdr, (size_t)n); (void)w; }
+    crash_handler_install();
+}
+
+/* A native crash cannot say goodbye, and the Java handler only sees Java exceptions: this writes the
+ * signal and a backtrace into the same fpdc.log, which is what a report needs (the addresses are
+ * resolved against the .so of the same build). */
+typedef struct { uintptr_t pc[48]; int n; } bt_t;
+
+static _Unwind_Reason_Code bt_step(struct _Unwind_Context *c, void *arg) {
+    bt_t *b = (bt_t *)arg;
+    uintptr_t pc = (uintptr_t)_Unwind_GetIP(c);
+    if (pc && b->n < (int)(sizeof b->pc / sizeof *b->pc)) b->pc[b->n++] = pc;
+    return b->n >= (int)(sizeof b->pc / sizeof *b->pc) ? _URC_END_OF_STACK : _URC_NO_REASON;
+}
+
+static void crash_write(const char *buf, int n) {
+    if (n <= 0) return;
+    if (log_fd >= 0) { ssize_t w = write(log_fd, buf, (size_t)n); (void)w; }
+    ssize_t w2 = write(2, buf, (size_t)n);
+    (void)w2;
+}
+
+static void crash_handler(int sig, siginfo_t *info, void *ctx) {
+    (void)ctx;
+    bt_t bt;
+    bt.n = 0;
+    _Unwind_Backtrace(bt_step, &bt);
+    char buf[96];
+    int n = snprintf(buf, sizeof buf, "\n---- native crash: signal %d at %p ----\n", sig,
+                     info ? info->si_addr : (void *)0);
+    crash_write(buf, n);
+    for (int i = 0; i < bt.n; i++) {
+        n = snprintf(buf, sizeof buf, "  #%02d %p\n", i, (void *)bt.pc[i]);
+        crash_write(buf, n);
+    }
+    signal(sig, SIG_DFL);                        /* the system still gets its tombstone */
+    raise(sig);
+}
+
+static void crash_handler_install(void) {
+    static char alt[64 * 1024];
+    stack_t ss;
+    memset(&ss, 0, sizeof ss);
+    ss.ss_sp = alt;
+    ss.ss_size = sizeof alt;
+    sigaltstack(&ss, NULL);                      /* an overflow must not need the game's stack */
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = crash_handler;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&sa.sa_mask);
+    const int sigs[] = { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT, SIGTRAP };
+    for (unsigned i = 0; i < sizeof sigs / sizeof *sigs; i++) sigaction(sigs[i], &sa, NULL);
 }
 
 void plat_log(const char *fmt, ...) {
@@ -416,6 +473,18 @@ void shell_log_share(void) {
     plat_log("log shared: %s", log_path);
     jni_call_void("shareLog", "(Ljava/lang/String;)V", log_path);
 }
+/* the same tail the share sheet sends, onto the clipboard: the player pastes it into a chat */
+void shell_log_copy(void) {
+    if (!log_path[0]) { plat_log("no log file to copy"); return; }
+    plat_log("log copied to the clipboard: %s", log_path);
+    jni_call_void("copyLog", "(Ljava/lang/String;)V", log_path);
+}
+/* a real file the player can find with a file manager or over USB */
+void shell_log_save(void) {
+    if (!log_path[0]) { plat_log("no log file to save"); return; }
+    plat_log("log saved: %s", log_path);
+    jni_call_void("saveLog", "(Ljava/lang/String;)V", log_path);
+}
 const char *shell_log_file(void) { return log_path; }
 
 /* ------------------------------------------------------------------ EGL */
@@ -514,6 +583,7 @@ static void apply_settings(void) {
     rgl_set_mode(mode, filt, lb, scan);   /* the port's letterbox is the upscale's; the game's own
                                            * widescreen option (r_set_letterbox) stays the game's */
     snd_master(shell_get_int("audio.music", 80), shell_get_int("audio.sfx", 90));
+    snd_trace(shell_get_int("sys.sndtrace", 0));
     keep_screen_on(shell_get_int("sys.keepon", 1));
 }
 
@@ -583,8 +653,8 @@ static void do_back(void) {
         else want_exit = 1;                      /* HOME + back = leave the app */
         return;
     }
-    if (shell_editor()) shell_editor_open(0);    /* close the in-game editor */
-    else shell_editor_open(1);                   /* back in game = the controls editor */
+    if (shell_editor()) { shell_editor_open(0); return; }        /* close the in-game editor */
+    shell_pause_open(!shell_pause());                             /* back in game = pause / resume */
 }
 
 static int32_t on_input(struct android_app *app, AInputEvent *ev) {
@@ -803,6 +873,13 @@ void android_main(struct android_app *app) {
         snd_recover();                              /* lost stream, delivery rate (cheap) */
         if (back_key) { back_key = 0; do_back(); }
 
+        if (shell_take_exit()) {                      /* the pause menu: EXIT TO LAUNCHER */
+            plat_log("exit to launcher");
+            snd_stop_all();
+            engine_stop();
+            continue;
+        }
+
         if (want_quit) { want_quit = 0; engine_stop(); }
 
         if (shell_active()) {
@@ -851,7 +928,6 @@ void android_main(struct android_app *app) {
                      shell_active() ? "launcher" : "game");
         }
 
-        if (shell_take_exit()) want_exit = 1;
         if (want_exit) {
             plat_log("exiting");
             shell_save();

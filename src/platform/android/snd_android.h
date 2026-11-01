@@ -14,6 +14,7 @@ int  snd_init_state(void);        /* 0: the AAudio stream is running, <0: no aud
 int  snd_out_rate(void);          /* device sample rate (0 when silent) */
 void snd_free_all(void);          /* engine quit: release every resident sample (the launcher stays up) */
 void snd_recover(void);           /* main loop: rebuild a lost stream, measure the delivery rate once */
+void snd_trace(int on);           /* log every voice start (sys.sndtrace: which sound is that?) */
 void snd_stop_mixer(void);        /* app exit: stop the stream and the music thread */
 void snd_suspend(void);           /* app paused: stop the stream (keeps its place in the music) */
 void snd_resume(void);

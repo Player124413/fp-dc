@@ -144,7 +144,7 @@ static void home(float dt) {
 
     float fpx = ui_dp(1.1f);
     ui_text(MARGIN, (float)ui_h() - MARGIN - UI_TEXT_H(fpx), fpx, 0x558a9ac0,
-            "BACK: EXIT   -   IN GAME, THE GEAR OPENS THE CONTROL EDITOR");
+            "BACK: EXIT   -   IN GAME, THE GEAR (OR BACK) OPENS THE PAUSE MENU: RESUME, CONTROLS, EXIT");
 
     if (shell_starting()) {
         /* game_init() takes seconds on a phone: a tap on PLAY must not look like nothing happened */
@@ -204,7 +204,7 @@ static void settings_screen(void) {
 
     if (settings_tab == 0) n = 6;
     else if (settings_tab == 1) n = 7;
-    else n = 5;
+    else n = 6;
 
     if (settings_tab == 0) {
         static const char *modes[] = { "PIXEL", "SHARP" };
@@ -288,12 +288,19 @@ static void settings_screen(void) {
             if (w_toggle(ID_SET + 43, x, y, w, h, "KEEP ASPECT", &lbox)) shell_set_int("video.letterbox", lbox);
         }
         row_geom(i++, n, &y, &h);
+        {
+            /* for a bug report about the sound: every voice start lands in the log */
+            int tr = shell_get_int("sys.sndtrace", 0);
+            if (w_toggle(ID_SET + 45, x, y, w, h, "SOUND TRACE (FOR REPORTS)", &tr)) shell_set_int("sys.sndtrace", tr);
+        }
+        row_geom(i++, n, &y, &h);
         if (w_button(ID_SET + 44, x, y, w, h, "RESET ALL SETTINGS", W_DANGER, 1)) {
             static const char *keys[] = { "render.mode", "render.filter", "render.scanlines", "sys.showfps" };
             static const int defs[] = { 0, 0, 0, 0 };
             for (int k = 0; k < 4; k++) shell_set_int(keys[k], defs[k]);
             shell_set_int("render.fps", 60);
             shell_set_int("video.letterbox", 1);
+            shell_set_int("sys.sndtrace", 0);
             shell_set_int("sys.keepon", 1);
             shell_set_int("audio.music", 80);
             shell_set_int("audio.sfx", 90);
@@ -338,10 +345,17 @@ static void about(void) {
     ui_text(MARGIN, y, px, UI_DIM, "SOMETHING WRONG? SEND THE LOG - IT IS ONE FILE:");
     y += UI_TEXT_H(px) + ui_dp(4);
     ui_text(MARGIN, y, px, UI_ACCENT, shell_log_file()[0] ? shell_log_file() : "(no log file)");
+    y += UI_TEXT_H(px) + ui_dp(3);
+    ui_text(MARGIN, y, px, UI_DIM, "COPY LOG PUTS IT ON THE CLIPBOARD: PASTE IT IN THE CHAT.");
     y += UI_TEXT_H(px) + ui_dp(8);
-    if (w_button(ID_ABOUT + 1, MARGIN, y, ui_is_wide() ? ui_dp(280) : w, ui_dp(44), "SHARE LOG FILE",
-                 W_PRIMARY, shell_log_file()[0] != 0))
-        shell_log_share();
+    /* three ways out of the same file: a chat (clipboard), any app (share sheet), a .txt in Downloads */
+    int has = shell_log_file()[0] != 0;
+    float bw = ui_is_wide() ? ui_dp(280) : w;
+    if (w_button(ID_ABOUT + 1, MARGIN, y, bw, ui_dp(44), "SHARE LOG FILE", W_PRIMARY, has)) shell_log_share();
+    y += ui_dp(50);
+    if (w_button(ID_ABOUT + 2, MARGIN, y, bw, ui_dp(44), "COPY LOG TO CLIPBOARD", W_GHOST, has)) shell_log_copy();
+    y += ui_dp(50);
+    if (w_button(ID_ABOUT + 3, MARGIN, y, bw, ui_dp(44), "SAVE LOG AS .TXT", W_GHOST, has)) shell_log_save();
 }
 
 /* ------------------------------------------------------------------ DATA */
