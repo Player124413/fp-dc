@@ -82,12 +82,18 @@ static void set_anim(player_t *p, int a) {
     if (h >= 0) anim_set(&hair, &G.hair, h); else hair.b = NULL;
 }
 
-/* animation tables for the character's banks (re-read after every level load: the banks are per level) */
-static const void *anims_key; static int anims_who = -1;
+/* animation tables for the character's banks (re-read after every level load: the banks are per level).
+ * Keyed on the bank SERIAL, not on the address of the animation array: a bank is freed with its level and
+ * the next one is malloc'd into the same address, so the addresses can be identical while the tables they
+ * hold are not (a stale index then pointed past the new bank's animations - the smeared sprite). The
+ * hair/tail table is built here too, and it is keyed on the same serial because the hair bank can be
+ * reloaded on its own. */
+static const void *anims_key; static unsigned anims_ser; static int anims_who = -1;
 static void player_anims_init(void) {
     int who = chr_is_carol(G.character) ? 1 : chr_is_milla(G.character) ? 2 : 0;
-    if (anims_key == (const void *)G.lilac.anims && anims_who == who) return;
-    anims_key = G.lilac.anims; anims_who = who;
+    unsigned ser = bank_serial();
+    if (anims_key == (const void *)G.lilac.anims && anims_ser == ser && anims_who == who) return;
+    anims_key = G.lilac.anims; anims_ser = ser; anims_who = who;
     char nm[20];
     if (who == 2) {   /* Milla: milla.inc looks her animations up by index and direction (a<index>[_l|_d<dir>]) */
         int a0 = bank_anim(&G.lilac, "a0");

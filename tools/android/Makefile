@@ -15,8 +15,8 @@ ANDROID_SRC := $(ROOT)/src/renderer/render_gles.c $(ROOT)/src/renderer/ui_gles.c
                $(ROOT)/src/renderer/twiddle.c $(ROOT)/src/resources/assets.c \
                $(ROOT)/src/platform/android/plat_android.c $(ROOT)/src/platform/android/snd_android.c
 
-.PHONY: check syntax abi twiddle font colour uiorder present texlife audio shell selftest preview
-check: syntax abi twiddle font colour uiorder present texlife audio shell selftest
+.PHONY: check syntax abi twiddle font colour uiorder present texlife anim audio shell selftest preview
+check: syntax abi twiddle font colour uiorder present texlife anim audio shell selftest
 
 syntax:
 	@for f in $(ANDROID_SRC); do echo "  syntax-check $$f"; $(CC) $(SYNTAX) $$f || exit 1; done
@@ -44,6 +44,13 @@ uiorder:
 texlife:
 	@$(CC) -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-strict-prototypes -I$(STUB) -I$(ROOT)/src \
 	   -o /tmp/fpdc_check_texlife check_texlife.c -lm && /tmp/fpdc_check_texlife
+
+# anim: an animator that outlived its bank (or that kept an index from the previous level's bank) must draw
+#       NOTHING - it used to index past anims[]/seq[]/frames[] and return a heap frame rect hundreds of
+#       pixels wide, which is the long smeared sprite on both heroines
+anim:
+	@$(CC) -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -I$(STUB) -I$(ROOT)/src \
+	   -o /tmp/fpdc_check_anim check_anim.c -lm && /tmp/fpdc_check_anim
 
 # audio: one AAudio stream, the music/effect tempo, the ADPCM layouts (fake AAudio, no device)
 audio:

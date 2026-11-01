@@ -168,21 +168,49 @@ int bank_anim(const bank_t *b, const char *name) {
     return i;
 }
 
+/* ------------------------------------------------------------------ animator bounds
+ * An animator can outlive the bank its numbers came from. game_unload_all() frees every bank of a level
+ * (bank_free() sets nanims to 0 and frees anims[], and the next level's arrays are allocated at the same
+ * addresses), while the player's cached index table (player_anims_init) or an object's animator still
+ * holds a number that was right for the previous bank. anim_frame() then read PAST anims[] - heap, or
+ * already freed memory - took a garbage anim_t from it, indexed seq[] with its garbage first/frame and
+ * then frames[] with the result. What came back was a frame rect of a few hundred pixels: the sprite was
+ * drawn as a long smear of one row of its atlas, and it stayed until the animation changed again. Both
+ * heroines were hit because both go through this table. Nothing is read outside the bank now, and an
+ * animator that cannot answer draws nothing at all. */
+static const frame_t no_frame;                    /* 0x0: r_sprite* draws nothing for it */
+
+static int anim_ok(const bank_t *b, int anim) {
+    return b && b->anims && b->frames && b->seq && b->nanims > 0 && anim >= 0 && anim < b->nanims;
+}
+
+unsigned bank_serial(void) { return bank_gen; }      /* player.c keys its anim table on this, not on a pointer */
+
 /* RE (Active::force_animation): an animation change/restart resets the frame but KEEPS the speed counter */
 void anim_restart(animator_t *a) {
     a->frame = 0; a->done = 0;
-    a->loops = a->b ? a->b->anims[a->anim].loop : -1;
+    a->loops = anim_ok(a->b, a->anim) ? a->b->anims[a->anim].loop : -1;
 }
 
 void anim_set(animator_t *a, const bank_t *b, int anim) {
     if (anim < 0) anim = 0;
+    if (anim_ok(b, anim) == 0) {
+        if (b && b->anims && b->nanims > 0) {
+            static int said;
+            if (said < 8) { said++; plat_log("anim: %d is not an animation of this bank (%d), using 0\n", anim, b->nanims); }
+            anim = 0;
+        } else {                                  /* no bank to speak of: nothing to draw */
+            a->b = NULL; a->anim = 0; a->frame = 0; a->acc = 0; a->done = 1;
+            return;
+        }
+    }
     if (a->b == b && a->anim == anim) return;
     a->b = b; a->anim = anim;
     anim_restart(a);
 }
 
 void anim_tick(animator_t *a, int speed_override) {
-    if (!a->b || a->done) return;
+    if (!anim_ok(a->b, a->anim) || a->done) return;
     const anim_t *an = &a->b->anims[a->anim];
     int spd = speed_override >= 0 ? speed_override : an->speed;
     /* RE (Active::update): counter += speed; a frame advances only when the counter goes ABOVE 100 */
@@ -198,24 +226,48 @@ void anim_tick(animator_t *a, int speed_override) {
     }
 }
 
+/* one line per distinct kind of breakage, so the next report says which of the two it was */
+static void anim_complain(const char *what, int anim, int nanims, int frame, int count) {
+    static int said;
+    if (said >= 8) return;
+    said++;
+    plat_log("anim: %s (animation %d of %d, frame %d of %d) -- nothing drawn\n", what, anim, nanims, frame, count);
+}
+
 const frame_t *anim_frame(const animator_t *a) {
+    if (!anim_ok(a->b, a->anim)) {
+        anim_complain("the animator points outside its bank", a ? a->anim : -1,
+                      (a && a->b) ? a->b->nanims : 0, a ? a->frame : -1, 0);
+        return &no_frame;
+    }
     const anim_t *an = &a->b->anims[a->anim];
-    return &a->b->frames[a->b->seq[an->first + a->frame]];
+    if (!an->count || a->frame < 0 || a->frame >= (int)an->count) {
+        anim_complain("the frame is outside the animation", a->anim, a->b->nanims, a->frame, (int)an->count);
+        return &no_frame;
+    }
+    int i = (int)an->first + a->frame;
+    if (i < 0) return &no_frame;
+    const uint16_t f = a->b->seq[i];                 /* bank_load() rejects a seq entry >= nframes */
+    if (f >= a->b->nframes) return &no_frame;
+    return &a->b->frames[f];
 }
 
 /* draw with hotspot at (x,y). flip mirrors (used only for single-direction objects) */
 void frame_draw(const bank_t *b, const frame_t *f, float x, float y, int flip, uint32_t argb) {
+    if (!b || !f || !f->w || !f->h) return;
     float dx = flip ? x - (f->w - f->hx) : x - f->hx;
     if (f->v & 0x8000) r_sprite(&b->tex2, f->u, f->v & 0x7fff, f->w, f->h, dx, y - f->hy, f->w, f->h, flip, argb);
     else r_sprite(&b->tex, f->u, f->v, f->w, f->h, dx, y - f->hy, f->w, f->h, flip, argb);
 }
 
 void frame_draw_scaled(const bank_t *b, const frame_t *f, float x, float y, float w, float h, uint32_t argb) {   /* top-left x, y, drawn w x h */
+    if (!b || !f || !f->w || !f->h) return;
     if (f->v & 0x8000) r_sprite(&b->tex2, f->u, f->v & 0x7fff, f->w, f->h, x, y, w, h, 0, argb);
     else r_sprite(&b->tex, f->u, f->v, f->w, f->h, x, y, w, h, 0, argb);
 }
 /* rotation around the hotspot (the original rotates Actives around their hot spot) */
 void frame_draw_rot(const bank_t *b, const frame_t *f, float x, float y, float angle_deg, int flip, uint32_t argb) {
+    if (!b || !f || !f->w || !f->h) return;
     if (angle_deg == 0 && !flip && r_get_scale() == 1.f && r_get_xscale() == 1.f) { frame_draw(b, f, x, y, 0, argb); return; }
     if (f->v & 0x8000) r_sprite_rot(&b->tex2, f->u, f->v & 0x7fff, f->w, f->h, x, y, f->hx, f->hy, angle_deg, flip, argb);
     else r_sprite_rot(&b->tex, f->u, f->v, f->w, f->h, x, y, f->hx, f->hy, angle_deg, flip, argb);

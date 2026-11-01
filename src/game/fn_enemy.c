@@ -52,7 +52,7 @@ static int a_playing(const obj_t *o, const char *base) { return a_is(o, base) &&
 /* set_direction: the image set changes, the animation, frame and counter stay (Active::update_direction) */
 static void face(obj_t *o, int dir) {
     o->dir = dir & 31;
-    if (o->an.b != &G.ens) return;
+    if (o->an.b != &G.ens || !G.ens.anims || o->an.anim < 0 || o->an.anim >= G.ens.nanims) return;
     char stem[20]; snprintf(stem, sizeof stem, "%s", G.ens.anims[o->an.anim].name);
     size_t n = strlen(stem); if (n > 2 && !strcmp(stem + n - 2, "_l")) stem[n - 2] = 0;
     int a = ens_of(o, stem);
@@ -61,7 +61,7 @@ static void face(obj_t *o, int dir) {
     o->an.anim = a; o->an.frame = fr < G.ens.anims[a].count ? fr : G.ens.anims[a].count - 1; o->an.acc = acc; o->an.loops = loops; o->an.done = done;
 }
 static void force_frame(obj_t *o, int f) {
-    if (!o->an.b) return;
+    if (!o->an.b || !o->an.b->anims || o->an.anim < 0 || o->an.anim >= o->an.b->nanims) return;
     int n = o->an.b->anims[o->an.anim].count;
     o->an.frame = f < 0 ? 0 : f < n ? f : n - 1;
 }
