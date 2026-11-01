@@ -106,4 +106,5 @@ int glVertexAttribPointer();
 int glViewport();
 const char *glGetString(unsigned int name);
 #define GL_VERSION 0x1F02
+#define GL_RENDERER 0x1F01
 #endif

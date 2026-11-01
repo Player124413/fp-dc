@@ -45,6 +45,30 @@ gradle wrapper --gradle-version 8.7     # once (or just open the folder in Andro
 `x86_64`. `minSdk 26` — AAudio, the low-latency output, starts there; GLES 3.0 is required by the
 manifest and is universal since 2013.
 
+### 32-bit devices
+
+One APK runs on both: `arm64-v8a` is the library a 64-bit phone loads, `armeabi-v7a` the 32-bit one, and
+Android picks. Nothing has to be selected at install time, and an update from a 64-bit build to a 32-bit
+one (or the other way) is still just an install over the top.
+
+* **The build cannot lose it.** `assembleDebug` builds every ABI in `abiFilters`, and the CI's
+  *Check what went into the APK* step fails the run when `lib/armeabi-v7a/libfpdc.so` is missing or is
+  not a 32-bit ELF (`readelf -h`), printing the size of each ABI it found. `make -C tools/android check`
+  runs `check_abi.py`, which refuses a `build.gradle` whose `abiFilters` no longer list both.
+* **The log says which one ran.** The header has a `build: armeabi-v7a, 32-bit` line (or `arm64-v8a,
+  64-bit`), and the ABOUT screen's BUILD row reads `V1.1  ANDROID  ARMEABI-V7A  32-BIT`. A crash report
+  from a 32-bit phone is a different `.so` (`unzip -p fpdc.apk lib/armeabi-v7a/libfpdc.so`), a 32-bit
+  address space and usually a weaker GPU: the line saves guessing.
+* **What a 32-bit phone is limited by** is memory and the GPU, not the code: the physics is fixed point,
+  audio positions are `int64_t` (a 16.16 position used to overflow an `int` on long tracks), files are
+  loaded one at a time and capped at 64 MB each, and the map/texture paths use `size_t`, so nothing
+  truncates on a 32-bit build.
+* **A device without OpenGL ES 3.0 has to say so.** The old 32-bit tablets are exactly the ones with an
+  ES 2.0-only driver (Mali-400 and friends). The port cannot draw a pixel there, and before this the
+  window stayed black with the reason inside a log that a black screen cannot reach. Now the EGL
+  failure prints the ES 2.0 version and renderer into the log (`gfx: the device offers OpenGL ES 2.0 ...`)
+  and shows a Toast: *"this device has no OpenGL ES 3.0 ... Log: /data/user/0/com.fpdc.port/files/fpdc.log"*.
+
 ### Installing an update: no uninstall
 
 Every build is signed with the same key, `android/keystore/fpdc.p12` (a sideload key, committed on purpose:
@@ -166,11 +190,15 @@ the *previous* session's tail followed by this one, because after a crash the se
 append themselves to it. `sys.sndtrace` (SETTINGS -> SYSTEM -> SOUND TRACE) logs every voice start, which is
 how a report about "extra sounds" says which sound it is.
 
-The file starts with the device, the Android API level, the window in pixels and dp, and the data folder, then
+The file starts with the build (the ABI and whether it is the 32-bit or the 64-bit library), the device, the
+Android API level, the window in pixels and dp, and the data folder, then
 one line per event with a relative timestamp, and every 150 frames a summary of what the renderer and the mixer
 actually did:
 
 ```
+build: arm64-v8a, 64-bit
+device: HONOR ALI-NX1, android 35, 2652x1200 px at 3.25x (816x369 dp)
+...
 frame 300: win 2652x1200 dp 3.25 ui 2652x1200, 812 quads + 63 sdf in 2 calls, glerr 0x0,
            game (mode 1 lvl dv1 p 1234,300 f 510, game 152 quads, 71 tex slots, 0 sprites skipped),
            rss 214 MB, snd 6 voices/0 underruns/0 steals m_stage1.adp
@@ -250,7 +278,7 @@ The workflow has two jobs, and it does not run anything on an emulator — the p
 | job | what it does |
 | --- | --- |
 | `checks` | the host checks below: the GLES sources compile against the stub NDK headers, every launcher screen renders to PNG, the colour packing, the draw order and the *texture handle lifecycle* of the GLES backend are pinned by tests (`check_texlife.c`: a handle dies with the table it came from, freeing a stale one must not delete the atlas that took its slot - the black screen on the second launch - and the upscale really samples the framebuffer's texture - the garbled PIXEL mode), and a selftest taps through the launcher (PLAY, the tabs, a row, a switch, a slider) checking that each one reacts |
-| `apk` | `sdkmanager` installs the SDK/NDK/CMake, Gradle 8.7 builds `assembleDebug` (debug only: no release APK any more), then the APK is inspected: `lib/*/libfpdc.so` and `classes.dex` present and signed with the committed key (that is what makes an update install without an uninstall) |
+| `apk` | `sdkmanager` installs the SDK/NDK/CMake, Gradle 8.7 builds `assembleDebug` (debug only: no release APK any more), then the APK is inspected: `lib/*/libfpdc.so` and `classes.dex` present and signed with the committed key (that is what makes an update install without an uninstall), and **each ABI it ships is required to be there** — `arm64-v8a`, `armeabi-v7a` (32-bit, checked to be an `ELF32` file) and `x86_64` |
 
 ## Verified / not verified
 
@@ -265,8 +293,9 @@ make -C tools/android preview    # every launcher/editor/in-game screen as PNG
 `tools/android/ndkstub/`, verifies `fp_untwiddle_offset()` against `tools/twiddle_disc.py` for 15 atlas shapes,
 checks the generated 5×7 font, and builds the shell against the host UI backend.
 
-Verified by CI: the NDK build of all three ABIs, both APKs carrying `libfpdc.so` and `classes.dex`, the
-signature being identical across builds, and the host checks above.
+Verified by CI: the NDK build of all three ABIs (each one required in the APK, `armeabi-v7a` checked to be a
+32-bit ELF), both APKs carrying `libfpdc.so` and `classes.dex`, the signature being identical across builds,
+and the host checks above.
 
 **Verified on a phone by hand** (that is the point of the log): the launcher, the controls editor, the
 settings, the import of the data package, touch and gamepad input, and the game itself. The host tests catch

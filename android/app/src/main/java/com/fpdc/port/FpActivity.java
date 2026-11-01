@@ -231,6 +231,13 @@ public class FpActivity extends NativeActivity {
 
     // ---------------------------------------------------------------- shell services (JNI)
 
+    /** A message with no OpenGL behind it. When the device cannot create an ES 3.0 context (an old
+     *  32-bit phone that only has ES 2.0) the native loop has nothing to draw ON, so a Toast is the only
+     *  way to say why the window is black. */
+    public void showMessage(final String msg) {
+        toast(msg);
+    }
+
     public void keepScreenOn(final boolean on) {
         runOnUiThread(new Runnable() {
             @Override

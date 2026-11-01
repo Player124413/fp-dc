@@ -112,6 +112,28 @@ jobs:
             [ -f "$apk" ] || { echo "::error::$apk was not built"; fail=1; continue; }
             echo "== $apk ($(du -h "$apk" | cut -f1))"
             unzip -l "$apk" | grep -E 'lib/.*/libfpdc\.so' || { echo "::error::the native library is missing from $apk"; fail=1; }
+            # Every ABI in android/app/build.gradle must really be in the APK. armeabi-v7a is the 32-bit
+            # one: without it the build installs on a 64-bit phone and is refused by an old 32-bit tablet
+            # ("app not installed"), and gradle drops an ABI it failed to build silently.
+            for abi in arm64-v8a armeabi-v7a x86_64; do
+              if unzip -l "$apk" | grep -q "lib/$abi/libfpdc\.so"; then
+                printf '  %-12s %s\n' "$abi" "$(unzip -p "$apk" "lib/$abi/libfpdc.so" | wc -c) bytes"
+              else
+                echo "::error::$abi is missing from $apk: a 32-bit device cannot install it"
+                fail=1
+              fi
+            done
+            # and it must be a 32-bit ELF, not a 64-bit file with a v7a name: that is what the 32-bit
+            # devices dlopen, so the header is the only proof that the 32-bit path was built at all
+            unzip -p "$apk" lib/armeabi-v7a/libfpdc.so > /tmp/v7a.so || true
+            if [ -s /tmp/v7a.so ]; then
+              if readelf -h /tmp/v7a.so | grep -q 'ELF32'; then
+                echo "  armeabi-v7a is a 32-bit ELF: $(readelf -h /tmp/v7a.so | awk '/Machine:/{print $2, $3, $4}')"
+              else
+                echo "::error::lib/armeabi-v7a/libfpdc.so is not a 32-bit library"
+                fail=1
+              fi
+            fi
             unzip -l "$apk" | grep -q 'classes.dex' || { echo "::error::no classes.dex in $apk"; fail=1; }
             # an update installs over the previous version only when the signature matches, so every
             # build must carry the same certificate -- the one in android/keystore

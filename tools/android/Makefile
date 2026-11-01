@@ -15,12 +15,16 @@ ANDROID_SRC := $(ROOT)/src/renderer/render_gles.c $(ROOT)/src/renderer/ui_gles.c
                $(ROOT)/src/renderer/twiddle.c $(ROOT)/src/resources/assets.c \
                $(ROOT)/src/platform/android/plat_android.c $(ROOT)/src/platform/android/snd_android.c
 
-.PHONY: check syntax twiddle font colour uiorder present texlife audio shell selftest preview
-check: syntax twiddle font colour uiorder present texlife audio shell selftest
+.PHONY: check syntax abi twiddle font colour uiorder present texlife audio shell selftest preview
+check: syntax abi twiddle font colour uiorder present texlife audio shell selftest
 
 syntax:
 	@for f in $(ANDROID_SRC); do echo "  syntax-check $$f"; $(CC) $(SYNTAX) $$f || exit 1; done
 	@echo "  android sources: ok (stub NDK headers)"
+
+# abi: the APK ships a 32-bit library next to the 64-bit one, and this is where that cannot be lost
+abi:
+	@python3 check_abi.py
 
 twiddle:
 	@python3 check_twiddle.py

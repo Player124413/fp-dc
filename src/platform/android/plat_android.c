@@ -68,6 +68,12 @@ static EGLSurface esurf = EGL_NO_SURFACE;
 static EGLContext ectx = EGL_NO_CONTEXT;
 static EGLConfig ecfg;
 static int gfx_ready, rgl_up;
+/* Why the last gfx_init() failed, kept for the message the player sees. A 32-bit phone that only has
+ * OpenGL ES 2.0 cannot draw one pixel of the port: the window stays black and the reason sits in a log
+ * the player cannot reach from a black screen, which looks exactly like a broken port. gfx_es3_missing
+ * says the device has no ES 3.0 at all, so retrying will never help. */
+static const char *gfx_err;
+static int gfx_es3_missing;
 static int win_w = 1280, win_h = 720;
 static float dp_scale = 3.0f;
 
@@ -124,6 +130,28 @@ static const char *device_name(void) {
     return name;
 }
 
+/* The ABI this library was compiled for. The APK carries a 32-bit library next to the 64-bit one, so
+ * the same install runs on an old phone as well; a report from one of those is a different report
+ * (another .so for the crash addresses, a 32-bit address space, usually a slower GPU), and nothing in
+ * the log used to say which build had produced it. It heads the log and the BUILD row of ABOUT. */
+static const char *build_abi(void) {
+#if defined(__aarch64__)
+    return "arm64-v8a";
+#elif defined(__arm__)
+    return "armeabi-v7a";
+#elif defined(__x86_64__)
+    return "x86_64";
+#elif defined(__i386__)
+    return "x86";
+#else
+    return "unknown";
+#endif
+}
+
+/* 32 on every armeabi-v7a/x86 phone: the size of a pointer, i.e. how much address space the process
+ * has (about 3 GB instead of terabytes), which is the number that explains an out-of-memory log. */
+static int build_bits(void) { return (int)(8 * sizeof(void *)); }
+
 static void crash_handler_install(void);   /* writes the signal and a backtrace into the log */
 
 /* <files>/fpdc.log, with the previous run rotated to fpdc.prev.log */
@@ -139,10 +167,12 @@ static void log_open(void) {
     char hdr[420];
     int n = snprintf(hdr, sizeof hdr,
                      "fpdc %s -- Freedom Planet, Android port\n"
+                     "build: %s, %d-bit\n"
                      "device: %s, android %d, %dx%d px at %.2fx (%.0fx%.0f dp)\n"
                      "data: %s\n"
                      "---- log ----\n",
-                     shell_build_version(), device_name(), android_get_device_api_level(), win_w, win_h, (double)dp_scale,
+                     shell_build_version(), build_abi(), build_bits(),
+                     device_name(), android_get_device_api_level(), win_w, win_h, (double)dp_scale,
                      win_w / (double)dp_scale, win_h / (double)dp_scale, dir_data);
     if (n > 0) { ssize_t w = write(log_fd, hdr, (size_t)n); (void)w; }
     crash_handler_install();
@@ -578,7 +608,19 @@ int shell_file_write(const char *name, const char *data, int len) {
 }
 
 void shell_exit_app(void) { want_exit = 1; }
-const char *shell_build_version(void) { return "V1.0  ANDROID"; }
+
+/* The BUILD row of ABOUT and the first line of the log. The ABI is part of it on purpose: "does this
+ * build run on my old 32-bit tablet" is answered by the app itself, not by guessing from the APK. */
+const char *shell_build_version(void) {
+    static char b[64];
+    if (!b[0]) {
+        char abi[16];
+        snprintf(abi, sizeof abi, "%s", build_abi());
+        for (char *p = abi; *p; p++) if (*p >= 'a' && *p <= 'z') *p = (char)(*p - 'a' + 'A');
+        snprintf(b, sizeof b, "V1.1  ANDROID  %s  %d-BIT", abi, build_bits());
+    }
+    return b;
+}
 
 void shell_device_info(char *buf, int cap) {
     int density = 0;
@@ -645,25 +687,97 @@ static float density_scale(void) {
     return s;
 }
 
+/* What the device can do, in the log: an ES 3.0 config or context failing is nearly always a phone
+ * that only has ES 2.0, and those are exactly the old 32-bit ones. Reading the ES 2.0 version and
+ * renderer turns "the port is broken" into "Mali-400 MP, OpenGL ES 2.0", which is a fact, not a guess. */
+static char gfx_have[96];
+
+static void gfx_log_gles_level(void) {
+    static int done;                       /* gfx_init() is retried in the loop: say it once */
+    if (done) return;
+    done = 1;
+    EGLint attr[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+                      EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_NONE };
+    EGLConfig c2; EGLint n = 0;
+    if (edpy == EGL_NO_DISPLAY) return;
+    if (!eglChooseConfig(edpy, attr, &c2, 1, &n) || n < 1) { plat_log("gfx: no ES 2 config either"); return; }
+    EGLint ca[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+    EGLContext c = eglCreateContext(edpy, c2, EGL_NO_CONTEXT, ca);
+    if (c == EGL_NO_CONTEXT) { plat_log("gfx: no ES 2 context either"); return; }
+    EGLSurface s = eglCreateWindowSurface(edpy, c2, APP->window, NULL);
+    if (s != EGL_NO_SURFACE && eglMakeCurrent(edpy, s, s, c)) {
+        const char *ver = (const char *)glGetString(GL_VERSION);
+        const char *ren = (const char *)glGetString(GL_RENDERER);
+        snprintf(gfx_have, sizeof gfx_have, "%s, %s", ver ? ver : "?", ren ? ren : "?");
+        plat_log("gfx: the device offers %s -- the port needs OpenGL ES 3.0", gfx_have);
+        eglMakeCurrent(edpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    }
+    if (s != EGL_NO_SURFACE) eglDestroySurface(edpy, s);
+    eglDestroyContext(edpy, c);
+}
+
+static int gfx_fail(const char *why, int no_es3) {
+    static const char *logged;             /* the loop retries every 20 ms: one line per distinct reason */
+    gfx_err = why;
+    gfx_es3_missing = no_es3;
+    if (logged != why) { logged = why; plat_log("gfx: %s", why); }
+    return -1;
+}
+
+/* A device that cannot start GL would show a black window forever: gfx_init() is retried in the main
+ * loop and the reason only ever landed in the log, which cannot be reached from a black screen. A
+ * Toast needs no GL at all, so it is the one way to say it out loud. */
+static void gfx_fail_note(void) {
+    static int last_ms;
+    if (!gfx_err) return;
+    int ms = (int)(plat_time_us() / 1000);
+    if (last_ms && ms - last_ms < 6000) return;      /* it is a Toast, not a flood */
+    last_ms = ms;
+    char msg[340];
+    if (gfx_es3_missing)
+        snprintf(msg, sizeof msg,
+                 "Freedom Planet port: %s%s%s. The port needs OpenGL ES 3.0, so it cannot run here. Log: %s",
+                 gfx_err, gfx_have[0] ? " -- the device offers " : "", gfx_have, log_path[0] ? log_path : "(no log)");
+    else
+        snprintf(msg, sizeof msg, "Freedom Planet port: %s. Log: %s", gfx_err, log_path[0] ? log_path : "(no log)");
+    jni_call_void("showMessage", "(Ljava/lang/String;)V", msg);
+}
+
 static int gfx_init(void) {
     if (!APP->window) return -1;
     if (edpy == EGL_NO_DISPLAY) {
         edpy = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-        if (edpy == EGL_NO_DISPLAY || !eglInitialize(edpy, NULL, NULL)) { LOGE("no EGL display"); return -1; }
+        if (edpy == EGL_NO_DISPLAY || !eglInitialize(edpy, NULL, NULL)) { LOGE("no EGL display"); return gfx_fail("no EGL display", 0); }
         EGLint attr[] = { EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
                           EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
                           EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
                           EGL_DEPTH_SIZE, 0, EGL_STENCIL_SIZE, 0, EGL_NONE };
         EGLint n = 0;
-        if (!eglChooseConfig(edpy, attr, &ecfg, 1, &n) || n < 1) { LOGE("no ES3 config"); gfx_teardown(); return -1; }
+        if (!eglChooseConfig(edpy, attr, &ecfg, 1, &n) || n < 1) {
+            LOGE("no ES3 config");
+            gfx_log_gles_level();                 /* names what the device does have: usually ES 2.0 */
+            gfx_teardown();
+            return gfx_fail("this device has no OpenGL ES 3.0", 1);
+        }
         eglBindAPI(EGL_OPENGL_ES_API);
         EGLint cattrs[] = { EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE };
         ectx = eglCreateContext(edpy, ecfg, EGL_NO_CONTEXT, cattrs);
-        if (ectx == EGL_NO_CONTEXT) { LOGE("no ES3 context"); gfx_teardown(); return -1; }
+        if (ectx == EGL_NO_CONTEXT) {
+            LOGE("no ES3 context");
+            gfx_log_gles_level();
+            gfx_teardown();
+            return gfx_fail("this device cannot create an OpenGL ES 3.0 context", 1);
+        }
+        plat_log("gfx: %s, %s, %s", build_abi(), (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
     }
     esurf = eglCreateWindowSurface(edpy, ecfg, APP->window, NULL);
-    if (esurf == EGL_NO_SURFACE) { LOGE("no window surface"); return -1; }
-    if (!eglMakeCurrent(edpy, esurf, esurf, ectx)) { LOGE("eglMakeCurrent failed"); eglDestroySurface(edpy, esurf); esurf = EGL_NO_SURFACE; return -1; }
+    if (esurf == EGL_NO_SURFACE) { LOGE("no window surface"); return gfx_fail("no window surface", 0); }
+    if (!eglMakeCurrent(edpy, esurf, esurf, ectx)) {
+        LOGE("eglMakeCurrent failed");
+        eglDestroySurface(edpy, esurf);
+        esurf = EGL_NO_SURFACE;
+        return gfx_fail("the display refused the context", 0);
+    }
     eglQuerySurface(edpy, esurf, EGL_WIDTH, &win_w);
     eglQuerySurface(edpy, esurf, EGL_HEIGHT, &win_h);
     if (win_w < 32 || win_h < 32) {
@@ -673,14 +787,16 @@ static int gfx_init(void) {
         eglMakeCurrent(edpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         eglDestroySurface(edpy, esurf);
         esurf = EGL_NO_SURFACE;
-        return -1;
+        return gfx_fail("the window has no size yet", 0);
     }
+    gfx_err = NULL;
+    gfx_es3_missing = 0;
     eglSwapInterval(edpy, 1);
     dp_scale = density_scale();
     shell_set_screen(win_w, win_h, dp_scale);
     rgl_resize(win_w, win_h);
     if (!rgl_up) {                       /* a returning window keeps the context: no re-init */
-        if (rgl_init() != 0) { LOGE("renderer init failed"); return -1; }
+        if (rgl_init() != 0) { LOGE("renderer init failed"); return gfx_fail("the renderer could not start", 0); }
         r_init();
         rgl_up = 1;
         plat_log("gfx: renderer inited");
@@ -975,7 +1091,10 @@ void android_main(struct android_app *app) {
                 acc = 0;
                 plat_log("window up: %dx%d %.2fx", win_w, win_h, (double)dp_scale);
             } else {
-                usleep(20000);
+                gfx_fail_note();                 /* black window -> say why, on screen, without GL */
+                /* a device without ES 3.0 will not grow one: retry slowly instead of rebuilding the
+                 * display twenty times a second */
+                usleep(gfx_es3_missing ? 400000 : 20000);
                 continue;
             }
         }
