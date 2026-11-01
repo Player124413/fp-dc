@@ -171,7 +171,11 @@ int   lz4_decode(const uint8_t *src, size_t src_len, uint8_t *dst, size_t dst_le
 int    loading_active(void);
 
 /* ---------------------------------------------------------------- renderer */
-typedef struct { int id, w, h, srcw, srch; } tex_t;
+/* gen: the load generation of the slot this handle was given. A handle outlives the texture table
+ * being emptied (game_unload_all -> r_reset) unless something drops it, and a stale id then pointed at
+ * whatever atlas came next: the front end drew nothing at all after the engine was restarted, and other
+ * sprites drew another sheet's pixels. r_tex_alive() is the test, r_tex_free() honours it. */
+typedef struct { int id, w, h, srcw, srch; uint32_t gen; } tex_t;
 
 int    r_init(void);
 int    r_tex_load(tex_t *t, const void *fptx, size_t size);
@@ -183,7 +187,8 @@ void   r_rect(float x, float y, float w, float h, uint32_t argb);
 void   r_sprite_rot(const tex_t *t, int u, int v, int uw, int vh, float px, float py, float hx, float hy,
                     float angle_deg, int flip, uint32_t argb);   /* flip: mirrored image, hotspot uw - 1 - hx */
 void   r_end(void);
-void   r_tex_free(tex_t *t);           /* free one texture */
+void   r_tex_free(tex_t *t);           /* free one texture (a stale handle is only dropped, not freed) */
+int    r_tex_alive(const tex_t *t);    /* 1 = this handle still refers to a loaded texture */
 void   r_reset(void);                 /* free all textures (level change) */
 void   r_tint(float x, float y, float w, float h, uint32_t rgb);   /* dst *= (1 - rgb) */
 void   r_set_additive(int on);       /* following sprites drawn additively (Chowdren shader 0x20) */

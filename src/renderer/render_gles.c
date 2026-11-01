@@ -44,6 +44,7 @@ typedef struct {
 
 typedef struct {
     GLuint id;
+    uint32_t gen;                          /* which load this slot holds (see tex_t.gen) */
     int w, h, indexed, palrow, etc2;
 } gtex_t;
 
@@ -282,6 +283,11 @@ int rgl_window_h(void) { return win_h; }
 int rgl_vram_kb(void) { return vtex_kb; }
 uint32_t rgl_sprite_skips(void) { return rgl_skips; }
 int rgl_tex_slots(void) { return ntex; }
+static uint32_t tex_gen;                   /* bumped per successful load: stale handles go dead */
+static int tex_live(const tex_t *t) {
+    return t && t->id >= 0 && t->id < ntex && texs[t->id].id && texs[t->id].gen == t->gen && t->gen != 0;
+}
+int r_tex_alive(const tex_t *t) { return tex_live(t); }
 
 static void fbo_make(int w, int h) {
     if (fbo_tex) glDeleteTextures(1, &fbo_tex);
@@ -454,7 +460,7 @@ int r_tex_load(tex_t *t, const void *data, size_t size) {
     const uint8_t *d = data;
     uint16_t hdr[6];
     int w = 0, h = 0, fmt = -1, grp = 0;
-    t->id = -1; t->w = t->h = t->srcw = t->srch = 0;
+    t->id = -1; t->w = t->h = t->srcw = t->srch = 0; t->gen = 0;
     if (size < 16 || memcmp(d, "FPTX", 4)) { plat_log("gles: texture not FPTX (%zu bytes)\n", size); return -1; }
     memcpy(hdr, d + 4, 12);
     w = hdr[0]; h = hdr[1]; fmt = hdr[2]; grp = hdr[5];
@@ -532,16 +538,21 @@ int r_tex_load(tex_t *t, const void *data, size_t size) {
     }
     if (!ok) { glDeleteTextures(1, &id); g->id = 0; return -1; }
     vtex_kb += bytes / 1024;
-    t->id = slot; t->w = w; t->h = h; t->srcw = hdr[3]; t->srch = hdr[4];
+    g->gen = ++tex_gen;
+    t->id = slot; t->w = w; t->h = h; t->srcw = hdr[3]; t->srch = hdr[4]; t->gen = g->gen;
     return 0;
 }
 
 void r_tex_free(tex_t *t) {
-    if (t->id < 0 || t->id >= ntex || !texs[t->id].id) return;
+    /* the slot may have been reused (another load, or r_reset then a new level): then the atlas in it is
+     * NOT this handle's, and deleting it would blank somebody else's sprites */
+    if (!tex_live(t)) { t->id = -1; t->gen = 0; return; }
     flush();
     glDeleteTextures(1, &texs[t->id].id);
     texs[t->id].id = 0;
+    texs[t->id].gen = 0;
     t->id = -1;
+    t->gen = 0;
 }
 
 void r_reset(void) {
@@ -686,7 +697,7 @@ static void sprite_skip(const tex_t *t, int uw, int vh) {
 }
 
 void r_sprite(const tex_t *t, int u, int v, int uw, int vh, float x, float y, float w, float h, int flip, uint32_t argb) {
-    if (t->id < 0 || t->id >= ntex || !texs[t->id].id || w <= 0 || h <= 0) { rgl_skips++; sprite_skip(t, uw, vh); return; }
+    if (!tex_live(t) || w <= 0 || h <= 0) { rgl_skips++; sprite_skip(t, uw, vh); return; }
     if (x + w < 0 || y + h < 0 || x >= SCREEN_W || y >= SCREEN_H) return;
     {   /* a frame that claims to be larger than its atlas samples the clamped edge texels and smears a
          * stripe of them across the sprite (the "the girl has graphics bugs" look): cut it to the atlas */
@@ -707,7 +718,7 @@ void r_sprite(const tex_t *t, int u, int v, int uw, int vh, float x, float y, fl
 
 void r_sprite_rot(const tex_t *t, int u, int v, int uw, int vh, float px, float py, float hx, float hy,
                   float angle, int flip, uint32_t argb) {
-    if (t->id < 0 || t->id >= ntex || !texs[t->id].id) return;
+    if (!tex_live(t)) { rgl_skips++; return; }
     if (flip) hx = uw - 1 - hx;
     float ex = (hx > uw - hx ? hx : uw - hx) * (rxscale > 1.f ? rxscale : 1.f) * rscale;
     float ey = (hy > vh - hy ? hy : vh - hy) * rscale;

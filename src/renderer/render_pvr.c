@@ -133,8 +133,12 @@ int r_tex_load(tex_t *t, const void *data, size_t size) {
 
 /* free one texture (front-end screen banks are swapped) */
 void r_tex_free(tex_t *t) {
-    if (t->id < 0 || t->id >= ntex || !texs[t->id].ptr) return;
+    if (!r_tex_alive(t)) { t->id = -1; return; }
     pvr_wait_ready(); pvr_mem_free(texs[t->id].ptr); texs[t->id].ptr = NULL; t->id = -1;
+}
+/* the PVR table is only emptied through r_reset on a level change, and nothing keeps drawing across it */
+int r_tex_alive(const tex_t *t) {
+    return t && t->id >= 0 && t->id < ntex && texs[t->id].ptr != NULL;
 }
 
 /* drop every texture (level change): VRAM texture memory is reset as a whole */

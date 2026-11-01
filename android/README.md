@@ -131,6 +131,14 @@ music), so the package is the Dreamcast `converted/` tree, unpacked.
 | `audio.music` / `audio.sfx` | 80 / 90 | master volumes (the game's own options still apply) |
 | `pad.*` | | the touch layout written by the editor |
 
+## Restarting the engine
+
+EXIT TO LAUNCHER runs `engine_stop()` -> `game_unload_all()` -> `r_reset()`, which empties the whole texture
+table, and the next PLAY runs `game_init()` again in the same process. Anything that caches "I loaded this
+already" must therefore be able to tell that its textures are gone: the front end asks `r_tex_alive()` before
+trusting its own flag, and each `tex_t` carries the load generation of its slot, so a handle from before the
+reset can never draw (or free) the atlas that took the slot afterwards.
+
 ## Leaving the game
 
 The launcher's home screen is PLAY (or IMPORT GAME DATA), CONTROLS, SETTINGS, ABOUT and **COPY LOG**: the log
@@ -241,7 +249,7 @@ The workflow has two jobs, and it does not run anything on an emulator — the p
 
 | job | what it does |
 | --- | --- |
-| `checks` | the host checks below: the GLES sources compile against the stub NDK headers, every launcher screen renders to PNG, the colour packing and the draw order of the GLES backend are pinned by tests, and a selftest taps through the launcher (PLAY, the tabs, a row, a switch, a slider) checking that each one reacts |
+| `checks` | the host checks below: the GLES sources compile against the stub NDK headers, every launcher screen renders to PNG, the colour packing, the draw order and the *texture handle lifecycle* of the GLES backend are pinned by tests (`check_texlife.c`: a handle dies with the table it came from, and freeing a stale one must not delete the atlas that took its slot - that was the black screen on the second launch), and a selftest taps through the launcher (PLAY, the tabs, a row, a switch, a slider) checking that each one reacts |
 | `apk` | `sdkmanager` installs the SDK/NDK/CMake, Gradle 8.7 builds `assembleDebug` (debug only: no release APK any more), then the APK is inspected: `lib/*/libfpdc.so` and `classes.dex` present and signed with the committed key (that is what makes an update install without an uninstall) |
 
 ## Verified / not verified

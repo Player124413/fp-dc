@@ -85,6 +85,7 @@ static long data_bytes;
 
 static volatile int s_paused, s_focused = 1, s_stop;
 static int engine_ready;
+static int fe_reloaded;                    /* the blank-front-end safety net fired this engine start */
 static int want_quit;
 static int want_exit;
 static int import_status;
@@ -835,6 +836,7 @@ static int32_t on_input(struct android_app *app, AInputEvent *ev) {
 /* ------------------------------------------------------------------ engine lifecycle */
 static int engine_start(void) {
     if (engine_ready) return 0;
+    fe_reloaded = 0;
     r_reset();
     snd_init_fp();
     apply_settings();
@@ -1047,6 +1049,15 @@ void android_main(struct android_app *app) {
                     char gs[80];
                     game_brief(gs, sizeof gs);
                     plat_log("!! 60 frames with no geometry: %s, window %dx%d", gs, win_w, win_h);
+                }
+                /* Safety net for the front end: nothing it draws can be missing by design, so a title
+                 * screen that pushes no geometry at all is a stale state, not a picture. Reload it once
+                 * per engine start (the "second launch is black" bug); the banner stays if that fails. */
+                if (blank_frames == 120 && G.mode == MODE_FRONTEND && !fe_reloaded) {
+                    fe_reloaded = 1;
+                    plat_log("!! the front end drew nothing: reloading it");
+                    fe_enter();
+                    blank_frames = 0;
                 }
                 shell_set_blank_hint(blank_frames >= 60);
             }

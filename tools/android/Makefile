@@ -15,8 +15,8 @@ ANDROID_SRC := $(ROOT)/src/renderer/render_gles.c $(ROOT)/src/renderer/ui_gles.c
                $(ROOT)/src/renderer/twiddle.c $(ROOT)/src/resources/assets.c \
                $(ROOT)/src/platform/android/plat_android.c $(ROOT)/src/platform/android/snd_android.c
 
-.PHONY: check syntax twiddle font colour uiorder present audio shell selftest preview
-check: syntax twiddle font colour uiorder present audio shell selftest
+.PHONY: check syntax twiddle font colour uiorder present texlife audio shell selftest preview
+check: syntax twiddle font colour uiorder present texlife audio shell selftest
 
 syntax:
 	@for f in $(ANDROID_SRC); do echo "  syntax-check $$f"; $(CC) $(SYNTAX) $$f || exit 1; done
@@ -34,6 +34,12 @@ colour:
 uiorder:
 	@$(CC) -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-strict-prototypes -I$(STUB) \
 	   -o /tmp/fpdc_check_ui_order check_ui_order.c -lm && /tmp/fpdc_check_ui_order
+
+# texlife: a texture handle must die with the table it came from, and freeing a stale one must not delete
+#          the atlas that took the slot (the black screen on the second launch)
+texlife:
+	@$(CC) -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-strict-prototypes -I$(STUB) -I$(ROOT)/src \
+	   -o /tmp/fpdc_check_texlife check_texlife.c -lm && /tmp/fpdc_check_texlife
 
 # audio: one AAudio stream, the music/effect tempo, the ADPCM layouts (fake AAudio, no device)
 audio:

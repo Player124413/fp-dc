@@ -45,8 +45,12 @@ int r_tex_load(tex_t *t, const void *data, size_t size) {
 }
 
 void r_tex_free(tex_t *t) {
-    if (t->id < 0 || t->id >= ntex) return;
+    if (!r_tex_alive(t)) { t->id = -1; return; }
     free(texs[t->id].px); free(texs[t->id].idx); texs[t->id].px = NULL; texs[t->id].idx = NULL; t->id = -1;
+}
+/* the software backend never empties the table behind the game's back, so a live slot is enough */
+int r_tex_alive(const tex_t *t) {
+    return t && t->id >= 0 && t->id < ntex && (texs[t->id].px || texs[t->id].idx);
 }
 
 /* the host image is the logical 426x240 view; the presentation mode only matters on the DC (logged for tests) */

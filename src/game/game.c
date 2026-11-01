@@ -426,6 +426,10 @@ int game_init(void) {
         snprintf(nm, sizeof nm, "sfx/s%d.wav", id); snd_handle[id] = snd_load(nm); loading_tick();
     }
     for (int i = 0; i < NVOICES; i++) voice_handle[i] = -1;
+    /* snd_group is "which character's set is in sound RAM". engine_stop() releases every sample
+     * (snd_free_all) but the flag said "Lilac's is loaded", so the second launch loaded NO sound
+     * effects at all - it kept quiet until the player changed character. Ask for it again. */
+    snd_group = -1;
     snd_group_load(0);                             /* Lilac's set (the front end starts on her) */
     loading_end(); lp_end();
     /* legacy handles used by gameplay code, now mapped to the original sound IDs */

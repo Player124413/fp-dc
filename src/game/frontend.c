@@ -41,7 +41,17 @@ void fe_text(float x, float y, const char *s) {
     }
 }
 
+static void fe_unload(void);
 static int fe_load(void) {
+    /* fe_loaded only says "this process loaded the title once". game_unload_all() empties the texture
+     * table (r_reset) and does NOT know about these banks, so after an engine restart fe_loaded was still
+     * 1 while every handle in b_title/b_font pointed into a table that no longer held them: the front end
+     * drew nothing at all, and the screen stayed black behind the touch pad ("the second launch is a black
+     * screen"). Ask the handle, not the flag. */
+    if (fe_loaded && !r_tex_alive(&b_title.bank[0].tex)) {
+        plat_log("front end: its textures were dropped, loading again\n");
+        fe_unload();
+    }
     if (fe_loaded) return 0;
     loading_begin("frontend");
     int bad = 0;
@@ -68,7 +78,8 @@ static int fe_load(void) {
 
 /* the screen banks are swapped (VRAM): loaded while the previous screen's wipe has the view black */
 static int scr_load(int which) {
-    if (scr_loaded == which) return 0;
+    if (scr_loaded == which && (which < 0 || !b_scr.n || r_tex_alive(&b_scr.bank[0].tex))) return 0;
+    if (scr_loaded == which) { ui_free(&s_scr); ui_banks_free(&b_scr); scr_loaded = -1; }   /* textures were dropped */
     if (scr_loaded >= 0) { ui_free(&s_scr); ui_banks_free(&b_scr); }
     scr_loaded = -1;
     static const char *const BK[3] = { "chsel", "tasel", "gal" }, *const SC[3] = { "chsel_7", "tasel_6", "gal_11" };
