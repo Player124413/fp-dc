@@ -161,7 +161,8 @@ static void check_voice_tempo(void) {
     expect_near((int)(vox[0].pos >> 16), 11025, 40, "a 22050 Hz voice after half a second");
     mix(out, 24000);                                  /* the second half */
     mix(out, 64);                                     /* the frame that runs off the end turns it off */
-    if (vox[0].on) fail("a 1 s voice is still playing after 1 s of output (pos %d of %d)", vox[0].pos >> 16, 22050);
+    if (vox[0].on) fail("a 1 s voice is still playing after 1 s of output (pos %lld of %d)",
+                        (long long)(vox[0].pos >> 16), 22050);
     vox[0].on = 0;
 }
 
@@ -273,6 +274,41 @@ static void check_music_requests(void) {
     unlink(slow); unlink(fast); rmdir(bgm); rmdir(dir);
 }
 
+
+/* A sample longer than 1.5 s used to overflow the voice position: it is 16.16 source frames in an int,
+ * so 2^31 is reached at 32768 frames -- 1.5 s at 22.05 kHz, which DV1's ambience and the story voices
+ * are.  The index then goes negative, the mixer reads *before* the buffer (a voice that never ends,
+ * playing whatever the heap holds, and eventually the SIGSEGV the phone reported in the audio thread). */
+static void check_long_sample(void) {
+    static int16_t pcm[60000];                        /* 2.7 s at 22.05 kHz */
+    for (int i = 0; i < 60000; i++) pcm[i] = (int16_t)((i * 31) & 0x3fff);
+    for (int i = 0; i < MAX_SND; i++) { smp[i].used = 0; smp[i].pcm = NULL; }
+    for (int i = 0; i < MAX_VOICES; i++) { vox[i].on = 0; vox[i].reserved = 0; }
+    smp[0].pcm = pcm; smp[0].frames = 60000; smp[0].rate = 22050; smp[0].used = 1;
+    snprintf(smp[0].name, sizeof smp[0].name, "long sample");
+    nsmp = 1;
+    out_rate = 48000;
+    mus_f = NULL;                                     /* the music path stays out of this one */
+    voice_start(0, 0, 230, 128, 0, 0);
+    int16_t out[480 * 2];
+    long long want = ((long long)60000 * 48000) / 22050 + 480;
+    int done = 0;
+    while (vox[0].on && done < want) {
+        mix(out, 480);
+        done += 480;
+        if (vox[0].on) {
+            long long idx = (long long)(vox[0].pos >> 16);
+            if (vox[0].pos < 0 || idx >= smp[0].frames) {
+                fail("long sample: position %lld (index %lld of %d) reads outside the sample after %d output frames",
+                     (long long)vox[0].pos, idx, smp[0].frames, done);
+                break;
+            }
+        }
+    }
+    if (vox[0].on) fail("long sample: the voice never ended (%d output frames)", done);
+    smp[0].used = 0; smp[0].pcm = NULL; nsmp = 0;
+}
+
 int main(void) {
     printf("audio checks\n");
     check_stream_lifetime();
@@ -283,6 +319,7 @@ int main(void) {
     signal(SIGALRM, test_timeout);
     alarm(10);                       /* a deadlocked worker would otherwise hang the whole check */
     check_music_requests();
+    check_long_sample();
     alarm(0);
     printf("audio %s\n", fails ? "FAILED" : "ok");
     return fails ? 1 : 0;

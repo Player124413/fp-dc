@@ -28,7 +28,10 @@
 #include "../../fp.h"
 
 #define MAX_SND 768
-#define MAX_VOICES 32                          /* the AICA had 64 channels; 32 is plenty and cheap */
+/* The AICA had 64 channels, and the phone needs them: a log of DV1 on 32 showed 19, 26 and even 32
+ * voices busy for minutes, so every new effect stole the oldest one still playing -- which is heard as
+ * "the effects are gone / sound terrible", not as too many sounds. */
+#define MAX_VOICES 64
 #define MUS_RATE 32000                 /* the ADPCM music stream (tools/audio/convert_audio.py) */
 #define MUS_RING 32000                 /* one second of stereo at the source rate */
 #define MUS_CHUNK 1024
@@ -45,7 +48,7 @@ static int nsmp;
 
 typedef struct {
     const snd_t *s;
-    int pos;                           /* 16.16 source frames */
+    int64_t pos;                       /* 16.16 source frames: an int overflowed at 1.5 s of sample */
     uint32_t step;                     /* 16.16 source frames per output frame */
     int32_t gl, gr;                    /* mixing gains (vol * pan * master) */
     int vol, pan;
@@ -65,6 +68,7 @@ static pthread_mutex_t mix_lock = PTHREAD_MUTEX_INITIALIZER;
 static int out_rate = 48000;
 static int master_music = 80, master_sfx = 90;
 static int underruns;
+static volatile int steals;            /* one-shot voices taken over by a newer sound: a full pool */
 static int trace;                      /* sys.sndtrace: log every voice start, to answer "what sound is that?" */
 
 void snd_trace(int on) { trace = on ? 1 : 0; }
@@ -217,6 +221,7 @@ int snd_active_voices(void) {
     return n;
 }
 int snd_underruns(void) { return underruns; }
+int snd_steals(void) { return steals; }
 
 /* source frames per output frame, 16.16: the sample's rate times the requested pitch over the device
  * rate.  Recomputed whenever the device rate turns out to be something else than it claimed. */
@@ -303,6 +308,7 @@ static int voice_alloc(void) {
         if (vox[i].reserved) continue;
         if (vox[i].serial < best_serial) { best_serial = vox[i].serial; best = i; }   /* steal the oldest */
     }
+    if (best >= 0) steals++;
     return best;
 }
 
@@ -610,7 +616,7 @@ static void mix(int16_t *dst, int frames) {
             voice_t *o = &vox[v];
             if (!o->on) continue;
             if (!o->s || !o->s->pcm) { o->on = 0; continue; }
-            int idx = o->pos >> 16;
+            int idx = (int)(o->pos >> 16);
             if (idx >= o->s->frames) {
                 if (o->loop) { o->pos = 0; idx = 0; }
                 else { o->on = 0; continue; }
@@ -620,12 +626,12 @@ static void mix(int16_t *dst, int frames) {
             if (nxt < o->s->frames) {                 /* linear between the two source frames: the
                                                        * hardware's DAC smoothed them, a bare nearest
                                                        * read sounds harsh at 22 kHz into 48 kHz */
-                int32_t f = (o->pos >> 8) & 0xff;
+                int32_t f = (int32_t)((o->pos >> 8) & 0xff);
                 s += (int32_t)(((int64_t)(o->s->pcm[nxt] - s) * f) >> 8);
             }
             l += s * o->gl >> 8;
             r += s * o->gr >> 8;
-            o->pos += (int)o->step;
+            o->pos += (int64_t)o->step;
         }
         if (music_on) {
             if (avail >= 4) {

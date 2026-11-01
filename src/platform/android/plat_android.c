@@ -184,7 +184,9 @@ static void game_brief(char *b, int cap) {
  * The faulting address is resolved the same way: a fault inside a module, a mapped file or the heap
  * (no module) points at very different bugs. */
 typedef struct { char name[56]; uintptr_t base, end; } crash_mod_t;
-static crash_mod_t crash_mods[64];
+/* 256, not 64: the first report came back with exactly 64 entries (the cap) and none of them was
+ * libfpdc.so -- a zygote app process loads more system libraries than that before the app's own. */
+static crash_mod_t crash_mods[256];
 static int crash_nmods;
 
 static int crash_mod_probe(struct dl_phdr_info *info, size_t size, void *data) {
@@ -257,10 +259,10 @@ static void crash_handler(int sig, siginfo_t *info, void *ctx) {
       snd_music_name(music, sizeof music);
       game_brief(gs, sizeof gs);
       n = snprintf(buf, sizeof buf,
-                   "     state: %s, screen %d, pause %d, rss %d MB, snd %d voices / %d underruns, music %s\n"
+                   "     state: %s, screen %d, pause %d, rss %d MB, snd %d voices / %d underruns / %d steals, music %s\n"
                    "     game: %s, %d quads\n",
                    shell_in_game() ? "game" : "launcher", shell_screen(), shell_game_paused(),
-                   proc_rss_mb(), snd_active_voices(), snd_underruns(), music[0] ? music : "-",
+                   proc_rss_mb(), snd_active_voices(), snd_underruns(), snd_steals(), music[0] ? music : "-",
                    gs, rgl_quad_count());
       crash_write(buf, n); }
 
@@ -1061,10 +1063,11 @@ void android_main(struct android_app *app) {
             char gs[80];
             game_brief(gs, sizeof gs);
             plat_log("frame %u: win %dx%d dp %.2f ui %dx%d, %d quads + %d sdf in %d calls, glerr 0x%x, "
-                     "%s (%s, game %d quads), rss %d MB, snd %d voices/%d underruns %s",
+                     "%s (%s, game %d quads), rss %d MB, snd %d voices/%d underruns/%d steals %s",
                      ticks, win_w, win_h, (double)dp_scale, ui_w(), ui_h(), q, sdf, fl, (unsigned)err,
                      shell_active() ? "launcher" : "game", gs, rgl_quad_count(), proc_rss_mb(),
-                     snd_active_voices(), snd_underruns(), music[0] ? (mbase ? mbase + 1 : music) : "-");
+                     snd_active_voices(), snd_underruns(), snd_steals(),
+                     music[0] ? (mbase ? mbase + 1 : music) : "-");
         }
 
         if (want_exit) {
