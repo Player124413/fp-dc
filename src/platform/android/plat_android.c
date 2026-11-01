@@ -506,7 +506,8 @@ static int gfx_init(void) {
 static void apply_settings(void) {
     static int applied_mode = -1;
     int mode = shell_get_int("render.mode", RGL_PIXEL);
-    int filt = shell_get_int("render.filter", 1);
+    int filt = shell_get_int("render.filter", 0);   /* nearest: the launcher showed NEAREST while the
+                                                     * engine smoothed, and the pixel grid is the point */
     int lb = shell_get_int("video.letterbox", 1);
     int scan = shell_get_int("render.scanlines", 0);
     if (mode != applied_mode) { applied_mode = mode; plat_log("render mode %d, filter %d, letterbox %d, scanlines %d", mode, filt, lb, scan); }

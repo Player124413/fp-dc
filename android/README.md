@@ -112,7 +112,7 @@ music), so the package is the Dreamcast `converted/` tree, unpacked.
 | key | default | |
 |---|---|---|
 | `render.mode` | 0 | 0 = 426×240 texture upscale, 1 = draw at display scale |
-| `render.filter` | 1 | 0 = nearest, 1 = linear when upscaling |
+| `render.filter` | 0 | 0 = nearest (the pixel grid), 1 = smooth when upscaling |
 | `video.letterbox` | 1 | keep the view's shape (0 = stretch to the screen) |
 | `render.scanlines` | 0 | subtle 3-row scanlines |
 | `render.fps` | 60 | 30 halves the draw rate |

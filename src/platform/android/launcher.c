@@ -209,9 +209,10 @@ static void settings_screen(void) {
     if (settings_tab == 0) {
         static const char *modes[] = { "PIXEL", "SHARP" };
         static const char *filt[] = { "NEAREST", "SMOOTH" };
-        /* KEEP ASPECT keeps the view's shape and fills the rest of the screen with the same frame smeared
-         * and dimmed (no black bars); FILL SCREEN stretches the view over the whole window */
-        static const char *aspect[] = { "KEEP ASPECT", "FILL SCREEN" };
+        /* the index IS video.letterbox: 0 stretches the view over the window, 1 keeps its shape and fills
+         * the rest of the screen with the same frame smeared and dimmed (no black bars).  The list was in
+         * the other order, so a letterboxed phone said "FILL SCREEN". */
+        static const char *aspect[] = { "FILL SCREEN", "KEEP ASPECT" };
         static const char *onoff[] = { "OFF", "ON" };
         static const char *fps[] = { "60", "30" };
         int mode = shell_get_int("render.mode", 0), filter = shell_get_int("render.filter", 0);
