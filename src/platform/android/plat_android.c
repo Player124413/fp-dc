@@ -45,6 +45,7 @@
 
 #include "../../fp.h"
 #include "../../renderer/render_gles.h"
+#include "i18n.h"
 #include "shell.h"
 #include "snd_android.h"
 #include "plat_android.h"
@@ -649,6 +650,72 @@ void shell_log_save(void) {
 }
 const char *shell_log_file(void) { return log_path; }
 
+/* ------------------------------------------------------------------ links and the update check
+ * The native code has no HTTPS client (and the NDK ships no curl), so these two go through the Java
+ * activity: an ACTION_VIEW intent opens a link in the browser or Telegram, and one worker thread asks
+ * the GitHub API for the newest successful build of the CI workflow.  Both are fire-and-forget; the
+ * answer of the update check comes back on nativeUpdateResult(). */
+static int upd_state;                       /* 0 never asked, 1 asking, 2 answered, <0 failed */
+static long upd_build;                      /* newest CI run number GitHub knows about */
+static char upd_url[256];
+static char upd_msg[160];
+
+void shell_open_url(const char *url) {
+    if (!url || !url[0]) return;
+    plat_log("open url: %s", url);
+    jni_call_void("openUrl", "(Ljava/lang/String;)V", url);
+}
+
+void shell_check_updates(void) {
+    if (upd_state == 1) return;             /* one request at a time: a second tap is not a second check */
+    upd_state = 1;
+    upd_build = 0;
+    upd_url[0] = 0;
+    upd_msg[0] = 0;
+    plat_log("update check: asking GitHub for the newest build (this one is %d)", (int)FP_VERSION_CODE);
+    jni_call_void("checkUpdates", "(Ljava/lang/String;)V",
+                  "https://api.github.com/repos/Player124413/fp-dc/actions/workflows/android.yml/runs"
+                  "?status=success&per_page=1");
+}
+
+int shell_update_state(void) {
+    if (upd_state <= 0) return upd_state;
+    if (upd_state == 1) return 1;
+    if (FP_VERSION_CODE <= 0) return 2;                  /* a host build has no number to compare */
+    return upd_build > (long)FP_VERSION_CODE ? 3 : 2;
+}
+
+long shell_update_build(void) { return upd_build; }
+const char *shell_update_url(void) { return upd_url; }
+const char *shell_update_message(void) { return upd_msg; }
+
+/* called from Java when the request finishes (any thread) */
+JNIEXPORT void JNICALL Java_com_fpdc_port_FpActivity_nativeUpdateResult(JNIEnv *env, jobject thiz,
+                                                                       jint code, jint build, jstring url,
+                                                                       jstring msg) {
+    (void)thiz;
+    upd_state = code < 0 ? -1 : 2;
+    upd_build = build;
+    if (url) {
+        const char *s = (*env)->GetStringUTFChars(env, url, NULL);
+        if (s) {
+            snprintf(upd_url, sizeof upd_url, "%s", s);
+            (*env)->ReleaseStringUTFChars(env, url, s);
+        }
+    }
+    if (msg) {
+        const char *s = (*env)->GetStringUTFChars(env, msg, NULL);
+        if (s) {
+            snprintf(upd_msg, sizeof upd_msg, "%s", s);
+            (*env)->ReleaseStringUTFChars(env, msg, s);
+        }
+    }
+    plat_log("update check: code %d build %d %s", (int)code, (int)build, upd_url);
+}
+
+int shell_lang(void) { return fp_ru; }
+void shell_set_lang(int ru) { fp_ru = ru ? 1 : 0; shell_set_int("sys.lang", fp_ru); }
+
 /* ------------------------------------------------------------------ EGL */
 /* the window goes away (another app in front) but the context and every texture stay alive: Android
  * only destroys the surface, and rebuilding the context would mean reloading all of the game's
@@ -884,6 +951,7 @@ static void pad_axes(AInputEvent *ev) {
 
 static void do_back(void) {
     if (shell_active()) {
+        if (shell_popup_close()) return;         /* a window on top of the launcher takes the back key */
         if (shell_editor() && shell_screen() == SCREEN_CONTROLS) shell_open(SCREEN_HOME);
         else if (shell_screen() != SCREEN_HOME) shell_open(SCREEN_HOME);
         else want_exit = 1;                      /* HOME + back = leave the app */

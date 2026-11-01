@@ -13,7 +13,8 @@ SYNTAX := -fsyntax-only -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Werror=i
 
 ANDROID_SRC := $(ROOT)/src/renderer/render_gles.c $(ROOT)/src/renderer/ui_gles.c \
                $(ROOT)/src/renderer/twiddle.c $(ROOT)/src/resources/assets.c \
-               $(ROOT)/src/platform/android/plat_android.c $(ROOT)/src/platform/android/snd_android.c
+               $(ROOT)/src/platform/android/plat_android.c $(ROOT)/src/platform/android/snd_android.c \
+               $(ROOT)/src/platform/android/i18n.c
 
 .PHONY: check syntax abi twiddle font colour uiorder present texlife anim audio shell selftest preview
 check: syntax abi twiddle font colour uiorder present texlife anim audio shell selftest

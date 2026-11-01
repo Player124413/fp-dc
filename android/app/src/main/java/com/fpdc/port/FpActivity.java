@@ -9,6 +9,9 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
 import android.view.View;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 import android.view.WindowManager;
 
 import java.io.File;
@@ -17,6 +20,8 @@ import java.io.FileOutputStream;
 import java.io.PrintWriter;
 import java.io.RandomAccessFile;
 import java.io.StringWriter;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.zip.ZipEntry;
@@ -260,6 +265,81 @@ public class FpActivity extends NativeActivity {
             }
         } catch (RuntimeException ignored) {
         }
+    }
+
+    /** A link from the credits window or the update check: the browser, Telegram, whatever owns the
+     *  scheme.  The native side cannot start an activity, so every URL the shell shows comes through
+     *  here. */
+    public void openUrl(final String url) {
+        if (url == null || url.length() == 0) return;
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                } catch (Exception e) {
+                    toast("no app can open " + url);
+                }
+            }
+        });
+    }
+
+    /** The answer of checkUpdates(): code 0 = ok (build is the newest successful CI run), <0 = failed. */
+    public native void nativeUpdateResult(int code, int build, String url, String msg);
+
+    /** CHECK FOR UPDATES. The native side has no HTTPS client, so the request runs here on a worker
+     *  thread and the parsed answer goes back through nativeUpdateResult().  The API call asks for the
+     *  newest successful run of the CI workflow: its run_number is this build's versionCode, so the
+     *  comparison is exact rather than a guess from a version string. */
+    public void checkUpdates(final String api) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                int code = 0, build = 0;
+                String url = "", msg = "";
+                HttpURLConnection c = null;
+                try {
+                    c = (HttpURLConnection) new URL(api).openConnection();
+                    c.setConnectTimeout(8000);
+                    c.setReadTimeout(12000);
+                    c.setRequestProperty("Accept", "application/vnd.github+json");
+                    c.setRequestProperty("User-Agent", "fpdc-android");
+                    int status = c.getResponseCode();
+                    if (status != 200) {
+                        code = -1;
+                        msg = "HTTP " + status;
+                    } else {
+                        InputStream in = c.getInputStream();
+                        StringWriter sw = new StringWriter();
+                        byte[] buf = new byte[8192];
+                        int n;
+                        while ((n = in.read(buf)) > 0) sw.write(new String(buf, 0, n, "UTF-8"));
+                        in.close();
+                        JSONArray runs = new JSONObject(sw.toString()).optJSONArray("workflow_runs");
+                        if (runs == null || runs.length() == 0) {
+                            code = -2;
+                            msg = "no successful build on GitHub";
+                        } else {
+                            JSONObject run = runs.getJSONObject(0);
+                            build = run.optInt("run_number", 0);
+                            url = run.optString("html_url", "");
+                            if (build <= 0) {
+                                code = -2;
+                                msg = "the answer has no build number";
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    code = -1;
+                    msg = String.valueOf(e.getMessage());
+                } finally {
+                    if (c != null) c.disconnect();
+                }
+                nativeUpdateResult(code, build, url, msg);
+            }
+        }).start();
     }
 
     public void finishApp() {

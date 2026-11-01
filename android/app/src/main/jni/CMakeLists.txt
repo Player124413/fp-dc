@@ -28,9 +28,17 @@ set(FP_SRC
     ${FP}/src/platform/android/widgets.c
     ${FP}/src/platform/android/touch.c
     ${FP}/src/platform/android/cfg.c
+    ${FP}/src/platform/android/i18n.c
     ${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c)
 
 add_library(fpdc SHARED ${FP_SRC})
+
+# CHECK FOR UPDATES compares the newest successful CI run with the build's own version code, so the
+# number has to be inside the library: gradle passes it (fpVersionCode = the GitHub run number).
+if (NOT DEFINED FP_VERSION_CODE)
+    set(FP_VERSION_CODE 0)
+endif ()
+target_compile_definitions(fpdc PRIVATE FP_VERSION_CODE=${FP_VERSION_CODE})
 
 target_include_directories(fpdc PRIVATE
     ${FP}/src

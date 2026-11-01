@@ -25,6 +25,8 @@ int  stub_vibrations(void);
 int  stub_launched(void);
 int  stub_log_copies(void);                          /* the platform stub counts COPY LOG / SAVE LOG */
 int  stub_log_saves(void);
+const char *stub_opened_url(void);                   /* the last link the shell asked to open */
+int  stub_update_asked(void);                        /* CHECK FOR UPDATES reached the platform */
 int  stub_screen_w(void), stub_screen_h(void);
 float stub_dp(void);
 
@@ -91,6 +93,37 @@ static void scenario_home(void) {
     }
 }
 
+/* the launcher in Russian: the same code path, the other language */
+static void scenario_ru(void) {
+    scenario_begin();
+    shell_set_lang(1);
+    for (frame_no = 0; frame_no < 20; frame_no++) {
+        shell_frame(1.0f / 60.0f);
+        dump("home_ru");
+    }
+    shell_open(SCREEN_SETTINGS);
+    launcher_set_tab(2);
+    for (frame_no = 0; frame_no < 8; frame_no++) {
+        shell_frame(1.0f / 60.0f);
+        dump("settings_ru");
+    }
+}
+
+/* the two windows: the credits and the answer of the update check */
+static void scenario_popups(void) {
+    scenario_begin();
+    popup_open(SHELL_POPUP_CREDITS);
+    for (frame_no = 0; frame_no < 6; frame_no++) {
+        shell_frame(1.0f / 60.0f);
+        dump("credits");
+    }
+    popup_open(SHELL_POPUP_UPDATE);
+    for (frame_no = 0; frame_no < 6; frame_no++) {
+        shell_frame(1.0f / 60.0f);
+        dump("update");
+    }
+}
+
 static void scenario_settings(void) {
     scenario_begin();
     printf("settings: open=%d\n", shell_open(SCREEN_SETTINGS));
@@ -106,6 +139,15 @@ static void scenario_controls(void) {
     for (frame_no = 0; frame_no < 12; frame_no++) {
         shell_frame(1.0f / 60.0f);
         dump("controls");
+    }
+}
+
+static void scenario_about(void) {
+    scenario_begin();
+    shell_open(SCREEN_ABOUT);
+    for (frame_no = 0; frame_no < 8; frame_no++) {
+        shell_frame(1.0f / 60.0f);
+        dump("about");
     }
 }
 
@@ -342,6 +384,56 @@ static void scenario_selftest(void) {
         expect(find_widget(ID_DATA + 0, &x, &y), "IMPORT GAME DATA is on screen");
     }
 
+    /* the credits window: links are buttons, and BACK closes the window rather than the app */
+    {
+        float x, y;
+        scenario_begin();
+        shell_set_lang(0);
+        shell_frame(1.0f / 60.0f);
+        tap_widget(ID_HOME + 6, "CREDITS is on the launcher");
+        shell_frame(1.0f / 60.0f);
+        expect(!find_widget(ID_HOME + 0, &x, &y), "the window covers the launcher buttons underneath");
+        tap_widget(ID_CRED + 1, "the GitHub link is a button");
+        expect(!strcmp(stub_opened_url(), "https://github.com/Wangblows2000/fp-dc"),
+               "the GitHub link opens the original DC port");
+        shell_frame(1.0f / 60.0f);
+        tap_widget(ID_CRED + 2, "the Telegram link is a button");
+        expect(!strcmp(stub_opened_url(), "https://t.me/player1444ports"),
+               "the Telegram link opens the author's channel");
+        expect(shell_popup_close(), "BACK closes the window instead of leaving the app");
+        shell_frame(1.0f / 60.0f);
+        expect(find_widget(ID_HOME + 0, &x, &y), "and the launcher is back");
+    }
+
+    /* CHECK FOR UPDATES: the platform is asked, and the answer lands in a window of its own */
+    {
+        float x, y;
+        scenario_begin();
+        shell_frame(1.0f / 60.0f);
+        tap_widget(ID_HOME + 5, "CHECK FOR UPDATES is on the launcher");
+        expect(stub_update_asked(), "CHECK FOR UPDATES asks the platform to query GitHub");
+        shell_frame(1.0f / 60.0f);
+        expect(find_widget(ID_CRED + 11, &x, &y), "the answer window offers the builds page");
+        tap_widget(ID_CRED + 11, "the builds page button is on screen");
+        expect(strstr(stub_opened_url(), "github.com/Player124413/fp-dc") != NULL,
+               "the builds page button opens the port's own repository");
+        shell_popup_close();
+    }
+
+    /* the language: a row in SYSTEM, and the Russian text really reaches the font */
+    {
+        float x, y;
+        scenario_begin();
+        shell_set_lang(0);
+        shell_open(SCREEN_SETTINGS);
+        launcher_set_tab(2);
+        shell_frame(1.0f / 60.0f);
+        expect(find_widget(ID_SET + 46, &x, &y), "the SYSTEM tab has the LANGUAGE row");
+        tap_widget(ID_SET + 46, "the LANGUAGE row is on screen");
+        expect(shell_lang() == 1, "tapping LANGUAGE switches to Russian");
+        shell_set_lang(0);
+    }
+
     printf("selftest: %s\n", failures ? "FAILED" : "ok");
 }
 
@@ -411,8 +503,10 @@ int main(int argc, char **argv) {
     stub_set_data(1, 168L * 1024 * 1024);
     struct { const char *name; void (*fn)(void); } sc[] = {
         { "font", scenario_font },       { "home", scenario_home },     { "settings", scenario_settings },
+        { "ru", scenario_ru },           { "popups", scenario_popups },
         { "controls", scenario_controls }, { "editorkit", scenario_editor_touch }, { "ingame", scenario_ingame },
         { "pressed", scenario_pressed }, { "pause", scenario_pause },     { "data", scenario_data },
+        { "about", scenario_about },
         { "selftest", scenario_selftest },
     };
     int any = 0, all = argc == 2;

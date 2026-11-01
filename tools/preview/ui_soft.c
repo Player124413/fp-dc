@@ -12,6 +12,7 @@
 #include <string.h>
 #include "../../src/platform/android/ui.h"
 #include "../../src/platform/android/ui_font.h"
+#include "../../src/platform/android/ui_fontx.h"
 
 static int W, H;
 static float DENS;
@@ -174,14 +175,16 @@ void ui_quad(const float xy[8], uint32_t rgba) {
 }
 
 /* ------------------------------------------------------------------ text */
+/* the width is a character count, not a byte count: the Russian text is UTF-8 */
 float ui_text_w(float px, const char *s) {
-    if (!s || !*s) return 0;
-    return (6.0f * px) * (float)strlen(s) - px;
+    int n = ui_text_chars(s);
+    if (n <= 0) return 0;
+    return (6.0f * px) * (float)n - px;
 }
 
-static void glyph(float x, float y, float px, uint32_t rgba, int ch) {
-    if (ch < UI_FONT_FIRST || ch > UI_FONT_LAST) ch = '?';
-    const unsigned char *rows = ui_font_rows[ch - UI_FONT_FIRST];
+static void glyph(float x, float y, float px, uint32_t rgba, int cp) {
+    const unsigned char *rows = ui_glyph_rows(cp);      /* Cyrillic included: see ui_fontx.h */
+    if (!rows) rows = ui_glyph_rows('?');
     for (int r = 0; r < UI_FONT_H; r++)
         for (int c = 0; c < UI_FONT_W; c++)
             if (rows[r] & (1 << (4 - c))) ui_rect(x + c * px, y + r * px, px, px, rgba);
@@ -190,7 +193,12 @@ static void glyph(float x, float y, float px, uint32_t rgba, int ch) {
 float ui_text(float x, float y, float px, uint32_t rgba, const char *s) {
     if (!s) return 0;
     float cx = x;
-    for (const char *p = s; *p; p++, cx += 6.0f * px) glyph(cx, y, px, rgba, (unsigned char)(*p >= 'a' && *p <= 'z' ? *p - 32 : *p));
+    const char *p = s;
+    while (*p) {
+        int cp = ui_utf8_next(&p);
+        glyph(cx, y, px, rgba, cp);
+        cx += 6.0f * px;
+    }
     return ui_text_w(px, s);
 }
 float ui_text_c(float cx, float y, float px, uint32_t rgba, const char *s) {

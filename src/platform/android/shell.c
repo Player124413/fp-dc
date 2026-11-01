@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include "i18n.h"
 #include "shell.h"
 #include "ui.h"
 #include "widgets.h"
@@ -37,6 +38,7 @@ void shell_init(void) {
     int n = shell_file_read(SETTINGS_FILE, s_buf, (int)sizeof s_buf);
     if (n > 0) cfg_parse(s_buf, n);
     touch_load(touch_layout());        /* defaults + whatever port.txt says */
+    fp_ru = cfg_int("sys.lang", 0) != 0;   /* the language is a setting like any other */
     shell_log("shell: %d settings loaded, screen %d", cfg_count(), s_screen);
 }
 
@@ -48,6 +50,8 @@ void shell_reset(void) {
     s_dirty = 0;
     s_loaded = 0;
     cfg_clear();
+    fp_ru = 0;
+    launcher_reset();
     touch_cancel();
     w_release_all();
 }
@@ -168,18 +172,18 @@ static void pause_draw(void) {
     float x = (w - pw) * 0.5f, y = (h - ph) * 0.5f;
     ui_rrect(x, y, pw, ph, ui_dp(14), 0xf2101826);
     ui_rrect_line(x, y, pw, ph, ui_dp(14), ui_dp(1), 0x662f6ea0);
-    ui_text(x + ui_dp(22), y + ui_dp(14), ui_dp(1.5f), 0xffe8f0ff, "PAUSED");
+    ui_text(x + ui_dp(22), y + ui_dp(14), ui_dp(1.5f), 0xffe8f0ff, T("PAUSED", "ПАУЗА"));
     float bw = pw - ui_dp(44), bx = x + ui_dp(22), by = y + top;
     int log_ok = shell_log_file()[0] != 0;
-    if (w_button(ID_PAUSE + 0, bx, by, bw, bh, "RESUME", W_PRIMARY, 1)) shell_pause_open(0);
+    if (w_button(ID_PAUSE + 0, bx, by, bw, bh, T("RESUME", "ПРОДОЛЖИТЬ"), W_PRIMARY, 1)) shell_pause_open(0);
     by += bh + gap;
-    if (w_button(ID_PAUSE + 1, bx, by, bw, bh, "CONTROLS", W_GHOST, 1)) { shell_pause_open(0); shell_editor_open(1); }
+    if (w_button(ID_PAUSE + 1, bx, by, bw, bh, T("CONTROLS", "УПРАВЛЕНИЕ"), W_GHOST, 1)) { shell_pause_open(0); shell_editor_open(1); }
     by += bh + gap;
-    if (w_button(ID_PAUSE + 2, bx, by, bw, bh, "SHARE LOG", W_GHOST, log_ok)) shell_log_share();
+    if (w_button(ID_PAUSE + 2, bx, by, bw, bh, T("SHARE LOG", "ОТПРАВИТЬ ЛОГ"), W_GHOST, log_ok)) shell_log_share();
     by += bh + gap;
-    if (w_button(ID_PAUSE + 3, bx, by, bw, bh, "COPY LOG", W_GHOST, log_ok)) shell_log_copy();
+    if (w_button(ID_PAUSE + 3, bx, by, bw, bh, T("COPY LOG", "КОПИРОВАТЬ ЛОГ"), W_GHOST, log_ok)) shell_log_copy();
     by += bh + gap;
-    if (w_button(ID_PAUSE + 4, bx, by, bw, bh, "EXIT TO LAUNCHER", W_DANGER, 1)) shell_request_exit();
+    if (w_button(ID_PAUSE + 4, bx, by, bw, bh, T("EXIT TO LAUNCHER", "ВЫЙТИ В ЛАУНЧЕР"), W_DANGER, 1)) shell_request_exit();
 }
 
 void shell_set_blank_hint(int on) { s_blank = on ? 1 : 0; }   /* set by the platform loop each frame */
@@ -196,7 +200,7 @@ static void overlay_frame(float dt) {
             /* the engine ran a frame and pushed no geometry at all: the picture is a bare clear.  That
              * is never normal in game (even a fade to black draws its dimmer), so it is worth a banner
              * instead of a silent black screen. */
-            const char *t = "NO PICTURE - REPORT IT (COPY LOG)";
+            const char *t = T("NO PICTURE - REPORT IT (COPY LOG)", "НЕТ КАРТИНКИ — СООБЩИТЕ (КОПИРОВАТЬ ЛОГ)");
             float px = ui_dp(1.1f), w = ui_text_w(px, t);
             float x = ((float)ui_w() - w) * 0.5f, y = ui_dp(6);
             ui_rect(x - ui_dp(7), y - ui_dp(4), w + ui_dp(14), UI_TEXT_H(px) + ui_dp(8), 0xd0300808);

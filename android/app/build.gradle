@@ -39,7 +39,9 @@ android {
         }
         externalNativeBuild {
             cmake {
-                arguments '-DANDROID_STL=none', '-DCMAKE_BUILD_TYPE=Release'
+                // FP_VERSION_CODE lands in the library: CHECK FOR UPDATES compares it with the
+                // newest successful CI run (see src/platform/android/plat_android.c)
+                arguments '-DANDROID_STL=none', '-DCMAKE_BUILD_TYPE=Release', "-DFP_VERSION_CODE=${fpVersionCode}"
                 cFlags '-O3 -ffp-contract=off'
             }
         }

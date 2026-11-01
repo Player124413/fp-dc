@@ -16,14 +16,23 @@
 
 enum { SCREEN_HOME = 0, SCREEN_SETTINGS, SCREEN_CONTROLS, SCREEN_ABOUT, SCREEN_DATA, SCREEN_N };
 
+/* "check for updates": the CI run number of the newest successful build, asked from GitHub by the Java
+ * side (the native code cannot do HTTPS). 0 = never asked, 1 = asking, 2 = this build is the newest,
+ * 3 = there is a newer one, <0 = the check failed (code in the message). */
+#define FP_VERSION_CODE_DEFAULT 0
+#ifndef FP_VERSION_CODE
+#define FP_VERSION_CODE FP_VERSION_CODE_DEFAULT
+#endif
+
 /* Widget ids of the launcher screens: small integers, unique per screen (the widget table holds 128).
  * The host selftest taps them by id, so they live here rather than in launcher.c. */
 enum {
-    ID_HOME = 0,        /* +0 PLAY, +1 CONTROLS, +2 SETTINGS, +3 ABOUT, +4 COPY LOG */
+    ID_HOME = 0,        /* +0 PLAY, +1 CONTROLS, +2 SETTINGS, +3 ABOUT, +4 COPY LOG, +5 CHECK UPDATES, +6 CREDITS */
     ID_SET = 10,        /* +0 BACK, +10..+12 tabs, +20.. PICTURE, +30.. INPUT, +40.. SYSTEM */
-    ID_ABOUT = 60,      /* +1 SHARE LOG, +2 COPY LOG, +3 SAVE LOG */
+    ID_ABOUT = 60,      /* +1 SHARE LOG, +2 COPY LOG, +3 SAVE LOG, +4 CHECK UPDATES, +5 CREDITS */
     ID_DATA = 70,       /* +0 IMPORT */
-    ID_PAUSE = 90       /* +0 RESUME, +1 CONTROLS, +2 SHARE LOG, +3 COPY LOG, +4 EXIT TO LAUNCHER */
+    ID_PAUSE = 90,      /* +0 RESUME, +1 CONTROLS, +2 SHARE LOG, +3 COPY LOG, +4 EXIT TO LAUNCHER */
+    ID_CRED = 110       /* popup windows: +0 CLOSE, +1 the original DC port, +2 the channel; update: +10 CLOSE, +11 the page */
 };
 
 /* ---------------------------------------------------------------- platform services */
@@ -45,6 +54,20 @@ const char *shell_build_version(void);
 void  shell_device_info(char *buf, int cap);
 /* the log file the player can send us (empty when the platform has none): the share sheet, the
  * clipboard (paste it into a chat), and a .txt in Downloads */
+/* links and the update check (both go through Java: only the activity can open a URL or use HTTPS) */
+void  shell_open_url(const char *url);
+void  shell_check_updates(void);
+int   shell_update_state(void);                      /* see FP_UPDATE_* above */
+const char *shell_update_message(void);
+const char *shell_update_url(void);
+long  shell_update_build(void);                      /* the newest CI run number GitHub reported */
+#define SHELL_POPUP_CREDITS 1
+#define SHELL_POPUP_UPDATE  2
+void  popup_open(int which);                         /* 1 = credits, 2 = update check (launcher.c) */
+int   shell_popup_close(void);                       /* BACK with a window open closes it, not the app */
+/* the language: read from sys.lang by shell_init(), saved by shell_set_lang() */
+int   shell_lang(void);                              /* 1 = Russian */
+void  shell_set_lang(int ru);
 const char *shell_log_file(void);
 void  shell_log_share(void);
 void  shell_log_copy(void);
@@ -86,6 +109,9 @@ int   shell_ticks(void);
 
 /* ---------------------------------------------------------------- drawing pieces */
 void  launcher_draw(float dt, int screen);
+void  launcher_reset(void);                          /* forget the open window and the SETTINGS tab */
+int   launcher_tab(void);                            /* the SETTINGS tab that is up (preview/tests) */
+void  launcher_set_tab(int tab);
 void  editor_open(int from_game);                    /* ctl_editor.c: reset the selection */
 void  editor_draw(float dt);
 void  editor_touch(int phase, int id, float x, float y);

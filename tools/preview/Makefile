@@ -2,7 +2,7 @@
 #   make -C tools/preview            -> fpdc_preview
 #   ./fpdc_preview out/ all          -> PPM frames of every screen (tools/preview/run.sh: also PNG)
 SRC = preview.c shell_stub.c ui_soft.c \
-      ../../src/platform/android/shell.c ../../src/platform/android/launcher.c \
+      ../../src/platform/android/shell.c ../../src/platform/android/launcher.c ../../src/platform/android/i18n.c \
       ../../src/platform/android/ctl_editor.c ../../src/platform/android/pad_draw.c \
       ../../src/platform/android/widgets.c ../../src/platform/android/touch.c \
       ../../src/platform/android/cfg.c

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../src/platform/android/i18n.h"
 #include "../../src/platform/android/shell.h"
 
 #ifndef PREVIEW_W
@@ -61,6 +62,20 @@ void shell_data_import(void) {
     import_status = 1;
     import_msg = "IMPORTING 1 OF 3128 FILES...";
 }
+/* links and the update check: the preview records what it was asked to open */
+static const char *opened_url;
+static const char *update_url = "";
+static int update_asked;
+void shell_open_url(const char *url) { opened_url = url; }
+void shell_check_updates(void) { update_asked = 1; }
+int shell_update_state(void) { return 2; }             /* "this is the newest build" */
+const char *shell_update_message(void) { return ""; }
+const char *shell_update_url(void) { return update_url; }
+long shell_update_build(void) { return 0; }
+const char *stub_opened_url(void) { return opened_url ? opened_url : ""; }
+int stub_update_asked(void) { return update_asked; }
+int shell_lang(void) { return fp_ru; }
+void shell_set_lang(int ru) { fp_ru = ru ? 1 : 0; }
 void shell_data_import_done_cb(void) {}
 int shell_data_import_status(void) { return import_status; }
 const char *shell_data_import_message(void) { return import_msg; }
