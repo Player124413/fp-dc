@@ -572,6 +572,9 @@ void r_begin(void) {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, win_w, win_h);
         view_transform(&vsx, &vsy, &vox, &voy);
+        /* direct drawing has no finished frame to smear into the bars, so they get a dark matte
+         * instead of black */
+        if (opt_letterbox) glClearColor(0.055f, 0.062f, 0.078f, 1.0f);
     }
     glClear(GL_COLOR_BUFFER_BIT);
 }
