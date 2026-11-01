@@ -98,6 +98,7 @@ int glShaderSource();
 int glTexImage2D();
 int glTexParameteri();
 int glTexSubImage2D();
+int glUniform1f();
 int glUniform1i();
 int glUniform2f();
 int glUseProgram();

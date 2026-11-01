@@ -7,7 +7,9 @@
 CC ?= cc
 ROOT := $(abspath ../..)
 STUB := ndkstub
-SYNTAX := -fsyntax-only -std=gnu11 -Wall -Wextra -Wno-unused-parameter -I$(STUB)
+# -Werror=implicit-function-declaration: gcc 14 (the CI runner) rejects what gcc 12 only warns about, and
+# a GL call missing from ndkstub/ must fail here, not on the runner
+SYNTAX := -fsyntax-only -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Werror=implicit-function-declaration -I$(STUB)
 
 ANDROID_SRC := $(ROOT)/src/renderer/render_gles.c $(ROOT)/src/renderer/ui_gles.c \
                $(ROOT)/src/renderer/twiddle.c \
