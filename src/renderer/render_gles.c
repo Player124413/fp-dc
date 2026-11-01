@@ -293,6 +293,7 @@ static void fbo_make(int w, int h) {
     if (fbo_tex) glDeleteTextures(1, &fbo_tex);
     if (fbo) glDeleteFramebuffers(1, &fbo);
     glGenTextures(1, &fbo_tex);
+    glActiveTexture(GL_TEXTURE0);          /* flush() leaves unit 1 (the palette) active */
     glBindTexture(GL_TEXTURE_2D, fbo_tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -597,6 +598,7 @@ void r_begin(void) {
     invert_on = 0;
     rscale = rxscale = 1.f;
     r_stat_polys = 0;
+    glBindVertexArray(0);                 /* the shell UI leaves its own VAO bound after ui_begin() */
     in_fbo = opt_mode == RGL_PIXEL && fbo && fbo_w == VIEW_W;
     {
         view_rect_t r = view_fit(win_w, win_h, VIEW_W, VIEW_H, opt_letterbox);
@@ -673,6 +675,13 @@ void rgl_present(void) {
     glClear(GL_COLOR_BUFFER_BIT);            /* only a first-frame fallback: the backdrop covers it */
     glDisable(GL_BLEND);
     glUseProgram(prog_present);
+    /* The upscale samples the *framebuffer's* texture. Without this bind it sampled whatever atlas the
+     * last flush left on unit 0, and the 426x240 picture became a magnified slice of a sprite sheet: the
+     * PIXEL render mode drew a wall of tiny character faces and smeared text instead of the game. (The
+     * SHARP mode draws straight to the window and never noticed, which is why it looked like the mode
+     * switch was the trigger.) */
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, fbo_tex);
     float tw = (float)win_w, th = (float)win_h;
     float x0 = pv_x0, y0 = pv_y0, x1 = pv_x1, y1 = pv_y1;
     if (x1 - x0 < 1.0f || y1 - y0 < 1.0f) { x0 = 0; y0 = 0; x1 = tw; y1 = th; }

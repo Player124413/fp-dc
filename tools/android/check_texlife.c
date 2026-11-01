@@ -17,14 +17,25 @@
 static int gen_calls, del_calls;
 int glGenTextures(GLsizei n, GLuint *v) { (void)n; if (v) *v = 1000u + (GLuint)gen_calls; gen_calls++; return 0; }
 int glDeleteTextures(GLsizei n, const GLuint *v) { (void)n; (void)v; del_calls++; return 0; }
-int glBindTexture() { return 0; }
+/* which texture is bound on which unit: the upscale has to sample the framebuffer's texture */
+static GLuint bound_on[2];
+static GLenum active_unit = GL_TEXTURE0;
+int glActiveTexture(GLenum u) { active_unit = u; return 0; }
+int glBindTexture(GLenum target, GLuint id) {
+    (void)target;
+    int slot = (active_unit == GL_TEXTURE1) ? 1 : 0;
+    bound_on[slot] = id;
+    return 0;
+}
+int glBindVertexArray(GLuint v) { (void)v; return 0; }
+int glGenVertexArrays(GLsizei n, GLuint *v) { (void)n; if (v) *v = 1; return 0; }
+int glDeleteVertexArrays(GLsizei n, GLuint *v) { (void)n; (void)v; return 0; }
 int glTexParameteri() { return 0; }
 int glTexImage2D() { return 0; }
 int glTexSubImage2D() { return 0; }
 int glCompressedTexImage2D() { return 0; }
 int glPixelStorei() { return 0; }
 int glGetError() { return 0; }
-int glActiveTexture() { return 0; }
 int glUseProgram() { return 0; }
 int glCreateShader() { return 0; }
 int glShaderSource() { return 0; }
@@ -133,6 +144,19 @@ int main(void) {
         check(load(&d, bad, sizeof bad) < 0, "garbage is rejected");
         check(d.id < 0, "and the handle is dead, not slot 0");
         check(!r_tex_alive(&d), "so it never draws somebody else's atlas");
+    }
+
+    /* 6. the upscale must sample the framebuffer's own texture. It used to sample whatever atlas the
+     *    last flush left on unit 0, so PIXEL mode showed a magnified slice of a sprite sheet (a wall of
+     *    tiny character faces and smeared text) instead of the 426x240 picture. */
+    {
+        fbo_make(VIEW_W, VIEW_H);
+        in_fbo = 1;
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, 4242);              /* a "sprite sheet" left bound by the world pass */
+        rgl_present();
+        check(fbo_tex != 0 && bound_on[0] == fbo_tex, "the upscale samples the framebuffer texture");
+        in_fbo = 0;
     }
 
     printf("texture handle lifecycle %s\n", fails ? "FAILED" : "ok");

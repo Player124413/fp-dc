@@ -249,7 +249,7 @@ The workflow has two jobs, and it does not run anything on an emulator — the p
 
 | job | what it does |
 | --- | --- |
-| `checks` | the host checks below: the GLES sources compile against the stub NDK headers, every launcher screen renders to PNG, the colour packing, the draw order and the *texture handle lifecycle* of the GLES backend are pinned by tests (`check_texlife.c`: a handle dies with the table it came from, and freeing a stale one must not delete the atlas that took its slot - that was the black screen on the second launch), and a selftest taps through the launcher (PLAY, the tabs, a row, a switch, a slider) checking that each one reacts |
+| `checks` | the host checks below: the GLES sources compile against the stub NDK headers, every launcher screen renders to PNG, the colour packing, the draw order and the *texture handle lifecycle* of the GLES backend are pinned by tests (`check_texlife.c`: a handle dies with the table it came from, freeing a stale one must not delete the atlas that took its slot - the black screen on the second launch - and the upscale really samples the framebuffer's texture - the garbled PIXEL mode), and a selftest taps through the launcher (PLAY, the tabs, a row, a switch, a slider) checking that each one reacts |
 | `apk` | `sdkmanager` installs the SDK/NDK/CMake, Gradle 8.7 builds `assembleDebug` (debug only: no release APK any more), then the APK is inspected: `lib/*/libfpdc.so` and `classes.dex` present and signed with the committed key (that is what makes an update install without an uninstall) |
 
 ## Verified / not verified
