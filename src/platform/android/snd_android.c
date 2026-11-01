@@ -321,9 +321,12 @@ static void voice_start(int v, int h, int vol, int pan, int loop, int rate_hz) {
     o->on = 1;
     o->serial = ++voice_serial;
     voice_gain(o);
-    if (trace) plat_log("snd: play %s (slot %d) on voice %d, vol %d pan %d%s", o->s->name, h, v, vol, pan,
-                        loop ? " loop" : "");
+    char nm[48];
+    snprintf(nm, sizeof nm, "%s", o->s->name);   /* copied here: the slot may be freed after the unlock */
     pthread_mutex_unlock(&mix_lock);
+    /* the trace line outside the lock: logcat is not real-time and the audio callback waits on this mutex */
+    if (trace) plat_log("snd: play %s (slot %d) on voice %d, vol %d pan %d%s", nm, h, v, vol, pan,
+                        loop ? " loop" : "");
 }
 
 void snd_play(int h, int vol, int pan) {
