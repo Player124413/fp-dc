@@ -21,6 +21,8 @@ void AAudioStreamBuilder_setDirection(AAudioStreamBuilder *builder, int32_t dire
 void AAudioStreamBuilder_setFormat(AAudioStreamBuilder *builder, int32_t format);
 void AAudioStreamBuilder_setChannelCount(AAudioStreamBuilder *builder, int32_t channelCount);
 void AAudioStreamBuilder_setSampleRate(AAudioStreamBuilder *builder, int32_t sampleRate);
+void AAudioStreamBuilder_setFramesPerDataCallback(AAudioStreamBuilder *builder, int32_t frames);
+void AAudioStreamBuilder_setBufferCapacityInFrames(AAudioStreamBuilder *builder, int32_t frames);
 void AAudioStreamBuilder_setPerformanceMode(AAudioStreamBuilder *builder, int32_t mode);
 void AAudioStreamBuilder_setSharingMode(AAudioStreamBuilder *builder, int32_t mode);
 void AAudioStreamBuilder_setDataCallback(AAudioStreamBuilder *builder, AAudioStream_dataCallback cb, void *userData);

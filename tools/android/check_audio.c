@@ -24,7 +24,7 @@
 
 /* ------------------------------------------------------------------ the fake AAudio + platform */
 struct AAudioStream { int rate, running; };
-struct AAudioStreamBuilder { int rate, ch; };
+struct AAudioStreamBuilder { int rate, ch, frames, capacity; };
 
 static int open_calls, close_calls, start_calls, stop_calls;
 static struct AAudioStream fake_stream;
@@ -48,6 +48,8 @@ void AAudioStreamBuilder_setDirection(AAudioStreamBuilder *b, int32_t v) { (void
 void AAudioStreamBuilder_setFormat(AAudioStreamBuilder *b, int32_t v) { (void)b; (void)v; }
 void AAudioStreamBuilder_setChannelCount(AAudioStreamBuilder *b, int32_t v) { b->ch = (int)v; }
 void AAudioStreamBuilder_setSampleRate(AAudioStreamBuilder *b, int32_t v) { b->rate = (int)v; }
+void AAudioStreamBuilder_setFramesPerDataCallback(AAudioStreamBuilder *b, int32_t v) { b->frames = (int)v; }
+void AAudioStreamBuilder_setBufferCapacityInFrames(AAudioStreamBuilder *b, int32_t v) { b->capacity = (int)v; }
 void AAudioStreamBuilder_setPerformanceMode(AAudioStreamBuilder *b, int32_t v) { (void)b; (void)v; }
 void AAudioStreamBuilder_setSharingMode(AAudioStreamBuilder *b, int32_t v) { (void)b; (void)v; }
 void AAudioStreamBuilder_setDataCallback(AAudioStreamBuilder *b, AAudioStream_dataCallback cb, void *ud) { (void)b; (void)cb; (void)ud; }
@@ -84,6 +86,14 @@ static void check_stream_lifetime(void) {
     snd_init_fp();                                   /* the second PLAY of the session */
     snd_init_fp();
     if (open_calls != 1) fail("three init calls opened %d streams (one mixer may only run once)", open_calls);
+    /* The cushion the Dreamcast had for free (a hardware sound chip cannot be late): a callback of ~10 ms
+     * and a buffer of at least four of them.  AAudio's default is two bursts (~8 ms), and a callback that
+     * misses that deadline is a dropped or repeated block -- a hitch in the music. */
+    if (fake_builder.frames < 480 || fake_builder.frames > 1024)
+        fail("the callback asks for %d frames, not ~10 ms", fake_builder.frames);
+    if (fake_builder.capacity < 4 * fake_builder.frames)
+        fail("the stream buffer holds %d frames for a %d-frame callback (want 4x)",
+             fake_builder.capacity, fake_builder.frames);
     if (start_calls != 1) fail("%d requestStart calls", start_calls);
     if (close_calls != 0) fail("%d close calls before shutdown", close_calls);
     snd_stop_mixer();
@@ -286,6 +296,18 @@ static void check_music_requests(void) {
     while (waited < 3000 && strcmp(mus_name, "bgm/fast.adp")) { usleep(10000); waited += 10; }
     if (strcmp(mus_name, "bgm/fast.adp"))
         fail("after a request during an open the worker plays '%s', not the newer track", mus_name);
+
+    /* the Dreamcast's music_play() ignores the track that is already playing (plat_dc.c: "no restart / no
+     * duplicate"); this one restarted the file, so a caller that asks twice cut the music back to its first
+     * sample -- the report "the music stutters / plays wrong on Android, not on the Dreamcast" */
+    int serial = music_serial();
+    if (music_play("bgm/fast.adp") != 0) fail("music_play for the playing track");
+    usleep(80000);
+    if (music_serial() != serial) fail("music_play restarted the track that was already playing");
+    music_play_once("bgm/fast.adp");                        /* an explicit restart (the gallery's cards) */
+    waited = 0;
+    while (waited < 2000 && music_serial() == serial) { usleep(10000); waited += 10; }
+    if (music_serial() == serial) fail("music_play_once did not restart the track");
 
     music_stop();
     if (writer) fclose(writer);

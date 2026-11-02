@@ -616,3 +616,24 @@ The log answers the next report: `snd: the music ring ran dry N times (track ...
 `snd: a track change took the ring N times` (a large count means something keeps restarting the track), and the delivery-rate
 lines. `tools/android/check_audio.c` pins the rule without a device: a stale read position is not published into the new track's
 ring while the current one is (it fails on the old code), on top of D-125's pause test.
+
+## D-128 (Android): the music is not restarted by a request for the track that is playing, and the output stream gets the cushion a sound chip had
+The report after D-127 ("nothing helped -- the Dreamcast version never had this, the Android port does") points at the two places where the
+Android audio path is not the Dreamcast's, not at a race inside it. Both are fixed here.
+1. **The same track is not restarted.** `plat_dc.c`'s `music_play()` returns early when the requested track is the one already playing
+   ("no restart / no duplicate"); the Android `music_request()` did the opposite on purpose ("restart even if the same track is asked for
+   again: the caller wants a fresh start"). The game asks for music from many states -- a boss re-arming its track, a scene starting the
+   track its room already plays, a stage re-entry -- and every one of those calls on the Dreamcast did nothing while here it cut the music
+   back to its first sample: heard as the music hitching, stuttering, or "playing wrong" for no visible reason. The request is now ignored
+   when the track is playing (or already queued), exactly as the DC does; a real restart is `music_play_once()`, which is what the gallery's
+   cards use.
+2. **The output stream gets a cushion.** On the Dreamcast the AICA plays 64 KB of 32 kHz ADPCM (two seconds) from its own buffer: a late
+   refill is invisible because a sound chip cannot be "late". On Android the mixer runs inside the AAudio callback, and AAudio's default
+   buffer is two bursts -- about 8 ms at 48 kHz. The callback has 8 ms to be scheduled on a phone that is drawing a Dreamcast game at the
+   same time; when it misses, the platform drops or repeats a block, which is heard as a hitch in the music and a click in the effects, and
+   no amount of care in the mixer can prevent it. The stream now asks for a 512-frame callback (~11 ms) and a 2048-frame buffer (~43 ms,
+   four callbacks): the price is 43 ms of output latency, which no platformer notices. The music ring grew to the DC's two seconds with
+   64 ms chunks as well, so a stalled worker thread (a long frame, a page fault, the scheduler) is equally invisible.
+`tools/android/check_audio.c` pins both: the builder must ask for a ~10 ms callback and a buffer of at least four of them, and a
+`music_play()` for the track that is already playing must not bump the track serial while `music_play_once()` does (both checks fail on the
+old code). D-127's ring ownership and the underrun/track-change log lines stay.

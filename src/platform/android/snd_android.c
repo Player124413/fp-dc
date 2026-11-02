@@ -33,8 +33,13 @@
  * "the effects are gone / sound terrible", not as too many sounds. */
 #define MAX_VOICES 64
 #define MUS_RATE 32000                 /* the ADPCM music stream (tools/audio/convert_audio.py) */
-#define MUS_RING 32000                 /* one second of stereo at the source rate */
-#define MUS_CHUNK 1024
+/* Two seconds of stereo at the source rate.  The Dreamcast's stream buffer was 64 KB of 32 kHz ADPCM, which is
+ * the same two seconds: the chip played what it had while the refill ran late.  Here the refill is a thread on
+ * a phone that is also drawing a Dreamcast game, so the cushion is what keeps a stall (a long frame, a page
+ * fault, the scheduler) out of the music.  A chunk is 64 ms of audio, so the worker does a few dozen reads a
+ * second instead of a hundred. */
+#define MUS_RING 64000
+#define MUS_CHUNK 2048
 
 typedef struct {
     int16_t *pcm;
@@ -200,6 +205,13 @@ int snd_init_state(void) {
     AAudioStreamBuilder_setSampleRate(b, 48000);
     AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+    /* The cushion.  AAudio's default is two bursts -- about 8 ms at 48 kHz -- and the callback then has 8 ms to
+     * be scheduled on a phone that is drawing the game; a late callback is a dropped or repeated block, heard as
+     * a hitch in the music (and clicks in the effects).  A hardware sound chip had its own buffer and could not
+     * be "late", which is why the Dreamcast version never showed this.  A 43 ms buffer costs 43 ms of latency,
+     * which no platformer notices, and buys back a whole scheduler hiccup. */
+    AAudioStreamBuilder_setFramesPerDataCallback(b, 512);
+    AAudioStreamBuilder_setBufferCapacityInFrames(b, 2048);
     AAudioStreamBuilder_setDataCallback(b, audio_cb, NULL);
     AAudioStreamBuilder_setErrorCallback(b, audio_error, NULL);
     aaudio_result_t r = AAudioStreamBuilder_openStream(b, &stream);
@@ -634,12 +646,22 @@ static int music_request(int kind, const char *name) {
     if (!mus_thread_ok) mus_thread_ok = pthread_create(&mus_thread, NULL, mus_worker, NULL) == 0;
     if (!mus_thread_ok) return -1;
     pthread_mutex_lock(&mus_lock);
+    /* A request for the track that is already playing is ignored, as the Dreamcast's music_play() has always
+     * done (plat_dc.c: "no restart / no duplicate").  This side restarted the file instead, so any code path
+     * that asks for its track more than once -- a boss that re-arms its music, a scene that starts the same
+     * track, a stage re-entry -- cut the music back to its first sample every time: heard as the music
+     * hitching, stuttering or "playing wrong", while the same call on the Dreamcast did nothing at all.  A
+     * restart has to be asked for explicitly, with music_play_once() (the gallery's cards). */
+    if (kind == 1 && name) {
+        int playing = mus_f && !mus_ended && !strcmp(mus_name, name);
+        int queued = mus_req_kind == 1 && !strcmp(mus_req, name);
+        if (playing || queued) {
+            pthread_mutex_unlock(&mus_lock);
+            return 0;
+        }
+    }
     mus_req_kind = kind;
     if (name) snprintf(mus_req, sizeof mus_req, "%s", name);
-    if (kind != 3) {
-        /* restart even if the same track is asked for again: the caller wants a fresh start */
-        mus_name[0] = 0;
-    }
     pthread_cond_broadcast(&mus_cond);
     pthread_mutex_unlock(&mus_lock);
     return 0;

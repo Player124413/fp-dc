@@ -419,6 +419,13 @@ which means something keeps restarting the track. The rate line is measured over
 only when two windows agree -- one window read while a stage loads is low, and resampling to that number
 made the music drift and hitch for the whole session (D-127).
 
+Two things the Android path has to do the way the Dreamcast does (D-128). A `music_play()` for the track
+that is *already playing* is ignored -- the DC's `music_play()` never restarted what it had, and the game asks
+for its track more than once from several states; here that cut the music back to its first sample each time.
+And the output stream carries a cushion: a 512-frame callback with a 2048-frame buffer (~43 ms), plus a
+two-second music ring, because the DC played two seconds out of the AICA's own buffer and a hardware sound
+chip cannot be late. A missed callback deadline is a dropped block -- a hitch no mixer code can avoid.
+
 A native crash writes a self-contained block into the log before the system takes the process:
 
 ```
