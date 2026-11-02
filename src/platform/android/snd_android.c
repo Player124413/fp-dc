@@ -155,6 +155,9 @@ static volatile int stream_dead;          /* the error callback: the device took
 static volatile long long cb_frames;       /* frames delivered, for the one-time rate check */
 static volatile uint64_t cb_t0;
 static int rate_settled;
+static int rate_windows;                   /* how many windows agreed on the rate (see snd_recover) */
+static double rate_last;
+static int mus_taken_logged;
 
 static void mix(int16_t *dst, int frames);
 
@@ -460,12 +463,14 @@ static pthread_cond_t mus_cond = PTHREAD_COND_INITIALIZER;
 static pthread_t mus_thread;
 static int mus_thread_ok;
 static FILE *mus_f;
-static int mus_gen;
+static volatile int mus_gen;            /* read without the lock by the callback (see ring_owned) */
+static int mus_taken;                  /* buffers abandoned because another track took the ring */
 static char mus_req[64];
 static int mus_req_kind;                 /* 0 idle, 1 play, 2 play once, 3 stop */
 static char mus_name[64];
 static int mus_vol = 255;                /* the game's own option, 0..255 */
 static int mus_paused, mus_once, mus_ended, mus_serial, mus_stop_flag;
+static int underruns_logged;           /* the last underrun count in the log (see snd_recover) */
 static int mus_hist[2], mus_step_size[2] = { 127, 127 };
 static int mus_pcm_stream;              /* .pcm (s16le 22.05 kHz stereo) instead of .adp */
 static int mus_rate = MUS_RATE;         /* source frames per second of the current track */
@@ -488,6 +493,28 @@ static int ring_used(void) {
     int used = mus_head - mus_tail;
     if (used < 0) used += MUS_RING;
     return used;
+}
+
+/* The ring belongs to the track that was requested when it was read.  A request (play, play once, stop)
+ * zeroes it and starts another stream there, so the read position of a buffer that was being mixed at that
+ * moment names a place in the OLD ring: publishing it back used to report ring_used() of about half a
+ * second of audio the worker had not written -- the previous song's leftover frames (the ring is a plain
+ * array, the old samples are still in it), played over the start of the new one, and then a gap while the
+ * worker waited for a "full" ring to drain.  That is the report "the music glitches / plays the wrong thing
+ * when a stage or a scene starts": every track change had a chance to do it.  Two uses, both under the
+ * rule: the callback stops reading the ring in the middle of a buffer, and it publishes its position only
+ * into the ring it read. */
+static int ring_owned(int gen) { return mus_gen == gen; }
+
+static void ring_publish(int gen, int tail) {
+    pthread_mutex_lock(&mus_lock);
+    if (ring_owned(gen)) {                    /* the same track: hand the read position over */
+        mus_tail = tail;
+        pthread_cond_broadcast(&mus_cond);
+    } else {
+        mus_taken++;
+    }
+    pthread_mutex_unlock(&mus_lock);
 }
 
 static void cond_wait_ms(int ms) {
@@ -671,13 +698,9 @@ static void mix(int16_t *dst, int frames) {
     pthread_mutex_lock(&mix_lock);
     pthread_mutex_lock(&mus_lock);
     int music_on = mus_f && !mus_paused;
-    int head = mus_head, tail = mus_tail;
+    int tail = mus_tail;                           /* one look at the ring, with its rate */
     int avail = ring_used();
     int gen = mus_gen;
-    pthread_mutex_unlock(&mus_lock);
-    (void)head; (void)gen;
-
-    pthread_mutex_lock(&mus_lock);
     int src_rate = mus_rate;
     pthread_mutex_unlock(&mus_lock);
     /* source frames per output frame: 0.667 for a 32 kHz stream on a 48 kHz device.  It used to be the
@@ -714,6 +737,11 @@ static void mix(int16_t *dst, int frames) {
             r += s * o->gr >> 8;
             o->pos += (int64_t)o->step;
         }
+        if (music_on && !ring_owned(gen)) {             /* another track took the ring mid-buffer: stop
+                                                         * reading it, this buffer's music ends here */
+            music_on = 0;
+            mus_taken++;
+        }
         if (music_on) {
             if (avail >= 4) {
                 /* 32 kHz -> the device's rate is a real resample, and a straight line between two source frames leaves
@@ -746,12 +774,7 @@ static void mix(int16_t *dst, int frames) {
         dst[i * 2 + 0] = (int16_t)snd_soft(l);
         dst[i * 2 + 1] = (int16_t)snd_soft(r);
     }
-    if (consumed) {
-        pthread_mutex_lock(&mus_lock);
-        mus_tail = tail;
-        pthread_cond_broadcast(&mus_cond);
-        pthread_mutex_unlock(&mus_lock);
-    }
+    if (consumed) ring_publish(gen, tail);
     if (starve && music_on) underruns++;
     pthread_mutex_unlock(&mix_lock);
 }
@@ -766,6 +789,24 @@ static void mix(int16_t *dst, int frames) {
  *     measured rate instead of the claimed one.
  */
 void snd_recover(void) {
+    /* A ring that ran dry is the moment the music is silent while the worker refills it -- a hitch, the
+     * report "the music stutters".  Silence about it cannot be told apart from a wrong tempo, a missing
+     * track or a device that underruns, so say it once and then per 100; the same for a buffer abandoned
+     * because another track took the ring (music_taken is expected on every track change, rare enough
+     * that the count stays small unless something keeps restarting the track). */
+    if (underruns != underruns_logged && (underruns_logged == 0 || underruns - underruns_logged >= 100)) {
+        char nm[64];
+        snd_music_name(nm, sizeof nm);
+        plat_log("snd: the music ring ran dry %d times (track %s, %d Hz out)", underruns,
+                 nm[0] ? nm : "-", out_rate);
+        underruns_logged = underruns;
+    }
+    if (mus_taken != mus_taken_logged) {
+        char nm[64];
+        snd_music_name(nm, sizeof nm);
+        plat_log("snd: a track change took the ring %d times (track %s)", mus_taken, nm[0] ? nm : "-");
+        mus_taken_logged = mus_taken;
+    }
     if (stream_dead) {
         plat_log("snd: the output device disconnected, rebuilding the stream");
         stream_close();
@@ -779,16 +820,36 @@ void snd_recover(void) {
     if (rate_settled || !stream || susp_mask || !cb_t0) return;
     uint64_t dt = plat_time_us() - cb_t0;
     if (dt < 4000000ull) return;
-    rate_settled = 1;
     double meas = (double)cb_frames * 1000000.0 / (double)dt;
-    plat_log("snd: %.0f frames/s delivered, the stream reports %d Hz", meas, out_rate);
-    if (meas > 4000.0 && fabs(meas - (double)out_rate) > 0.02 * (double)out_rate) {
-        out_rate = (int)(meas + 0.5);
-        plat_log("snd: the device does not run at the rate it reports: resampling for %d Hz", out_rate);
-        pthread_mutex_lock(&mix_lock);
-        for (int i = 0; i < MAX_VOICES; i++) if (vox[i].on) voice_step(&vox[i]);
-        pthread_mutex_unlock(&mix_lock);
-    }
     cb_t0 = 0;
     cb_frames = 0;
+    if (!(meas > 4000.0)) return;                  /* the window covered a stall: ask again */
+    /* The delivered rate is trusted only when two windows in a row agree on it.  One window is measured
+     * right after the stream starts, while the game is still loading a stage: a callback that ran late
+     * makes it read low, and adopting that number resamples the music and every voice to a rate the device
+     * does not run at -- the tempo drifts, the ring fills and empties at the wrong speed and the music
+     * hitches for the rest of the session.  A phone that really delivers another rate says so twice. */
+    double off = meas / (double)out_rate - 1.0;
+    if (fabs(off) <= 0.02) {                       /* the stream reports the truth: nothing to do */
+        rate_settled = 1;
+        plat_log("snd: %.0f frames/s delivered, the stream reports %d Hz", meas, out_rate);
+        return;
+    }
+    if (rate_windows == 0 || fabs(meas / rate_last - 1.0) > 0.01) {
+        rate_last = meas;
+        rate_windows = 1;
+        plat_log("snd: %.0f frames/s delivered, the stream reports %d Hz (measuring again)", meas, out_rate);
+        return;
+    }
+    rate_windows = 0;
+    if (fabs(off) > 0.35) {                        /* not a rate this stream could be: a bad window */
+        plat_log("snd: %.0f frames/s delivered is not believable for a %d Hz stream", meas, out_rate);
+        return;
+    }
+    rate_settled = 1;
+    out_rate = (int)(meas + 0.5);
+    plat_log("snd: the device does not run at the rate it reports: resampling for %d Hz", out_rate);
+    pthread_mutex_lock(&mix_lock);
+    for (int i = 0; i < MAX_VOICES; i++) if (vox[i].on) voice_step(&vox[i]);
+    pthread_mutex_unlock(&mix_lock);
 }

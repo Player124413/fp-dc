@@ -596,3 +596,23 @@ per actor (`actor <n> is <class> on layer <l> (skin <s>)`), then the first draws
 line is missing and the class name tells us it is a prop of the scene); two actors printing the same spot are drawn on top of each other. With
 D-124/D-125's sprite dump, which covers `csx_draw_actors` too, the missing or misplaced prop is named from the log instead of guessed at -- the
 bike itself needs the data-side look (its row and its scene), not a renderer change.
+
+## D-127 (Android): the music ring belongs to the track it was read from, and a measured rate needs two windows
+Reported as "music bugs again" (the music breaks up / hitches). The mixer read the ring and then published its read position
+back, but a request (play, play once, stop) zeroes the ring and starts the next track there under the same lock -- the callback's
+`mus_gen` snapshot was taken and never used (`(void)gen`). So a track change that landed in the middle of a mix buffer put the
+OLD read position into the NEW ring: `ring_used()` then reported about half a second of audio nobody had written, and since the
+ring is a plain array the previous song's samples were still in it. The new track began with the old one's leftover frames
+(played at its tempo, so it sounds like the wrong music and a glitch), and the worker, seeing a "full" ring, slept until that
+ghost audio drained -- up to a second of silence before the track really started. The mixer is the audio callback, so the window
+is a couple of per cent of the time: the bug hit some track changes and not others, which is why it looked random.
+`ring_owned(gen)` is now the rule in both places: the callback stops reading the ring in the middle of a buffer when another
+track takes it, and `ring_publish()` hands the read position over only into the ring it read; a stale one is dropped and counted.
+The one-time rate check is stricter as well: the first window is measured while a stage loads, so it reads low, and adopting it
+resampled the music and every voice to a rate the device does not run at (tempo drift, then a ring that fills and empties at the
+wrong speed and hitches for the rest of the session). A rate is now adopted only when two 4-second windows agree within 1%, must
+be within 35% of what the stream reports, and the log says so.
+The log answers the next report: `snd: the music ring ran dry N times (track ..., N Hz out)` (starvation, the hitch itself),
+`snd: a track change took the ring N times` (a large count means something keeps restarting the track), and the delivery-rate
+lines. `tools/android/check_audio.c` pins the rule without a device: a stale read position is not published into the new track's
+ring while the current one is (it fails on the old code), on top of D-125's pause test.

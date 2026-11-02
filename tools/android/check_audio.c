@@ -141,6 +141,27 @@ static void check_music_tempo(void) {
     mus_f = NULL;
 }
 
+/* The ring belongs to the track that was requested when it was read: a request zeroes it and starts another
+ * stream there.  The mixer used to publish its read position anyway, into a ring the worker had just reset --
+ * ring_used() then reported about half a second of audio nobody had written (the previous track's samples,
+ * which are still in the array) and the new track began with the old one's leftover frames and a gap.  Every
+ * track change had a chance to do it, which is the report "the music glitches / something odd when a scene
+ * starts". */
+static void check_music_ring_owner(void) {
+    mus_f = NULL;                                     /* the ring alone: no file, no worker */
+    mus_paused = 0;
+    memset(mus_ring, 0, sizeof mus_ring);
+    mus_head = 20000; mus_tail = 0; mus_gen = 7;
+    int gen = mus_gen, tail = 5000;                   /* a buffer that read track 7's ring up to here */
+    mus_head = mus_tail = 0; mus_gen = 8;             /* the worker takes it for another track meanwhile */
+    ring_publish(gen, tail);
+    expect_near(mus_tail, 0, 0, "a stale read position is not published into the new track's ring");
+    if (!ring_owned(8) || ring_owned(7)) fail("the ring's owner is the current track only");
+    mus_head = 6000;
+    ring_publish(mus_gen, 4000);                      /* the new track's own buffer still reports */
+    expect_near(mus_tail, 4000, 0, "a current read position is published");
+}
+
 static void check_voice_tempo(void) {
     int16_t out[48000 * 2];
     static int16_t pcm[22050];
@@ -405,6 +426,7 @@ int main(void) {
     printf("audio checks\n");
     check_stream_lifetime();
     check_music_tempo();
+    check_music_ring_owner();
     check_voice_tempo();
     check_loop_voices_are_not_stolen();
     check_adpcm_layouts();

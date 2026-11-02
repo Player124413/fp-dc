@@ -403,6 +403,22 @@ The **pause panel** of a story scene holds the samples instead of killing them (
 the panel's own confirm beep is heard. They used to be stopped, which sounded like "half of the audio goes
 away when you pause".
 
+The **music stream** is a one-second ring the worker thread fills and the AAudio callback drains, and the
+log says what that ring did:
+
+```
+snd: the music ring ran dry 312 times (track bgm/m_stage1.adp, 48000 Hz out)
+snd: a track change took the ring 3 times (track bgm/m_stage2.adp)
+snd: 47995 frames/s delivered, the stream reports 48000 Hz
+```
+
+`ran dry` is the moment the callback wanted a sample the worker had not written yet: the music stops for as
+long as it takes to refill, which is heard as a hitch. `a track change took the ring` is normal on every
+switch (a request zeroes the ring and starts the next track there); what is not normal is a *large* count,
+which means something keeps restarting the track. The rate line is measured over four seconds and adopted
+only when two windows agree -- one window read while a stage loads is low, and resampling to that number
+made the music drift and hitch for the whole session (D-127).
+
 A native crash writes a self-contained block into the log before the system takes the process:
 
 ```
