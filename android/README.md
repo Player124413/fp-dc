@@ -364,15 +364,18 @@ actor, then the first draws of every scene with the spot each one lands on:
 story dv_meet: actor 2 is playerskincarol_449 on layer 2 (skin 1)
 story dv_meet: actor 3 is carolbike_450 on layer 2 (skin 0)
 story dv_meet: actor 4 is playerskinlilac_447 on layer 2 (skin 1)
-story dv_meet: carolbike_450 (actor 3) row 812 at (312,120) vis 0 alpha 255 flip 0
+story dv_meet: actor 3 is carolbike_450 on layer 2 (skin 0)
+story dv_meet: playerskincarol_449 (actor 2) row 812 at (312,120) vis 0 alpha 255 flip 0
 ```
 
 `is <class>` is the traced class name (a heroine, a prop, an effect), `layer` is the Fusion layer it sits on,
 and the draw line says which row of the `_ens` bank it uses, **where on screen it lands** and whether the
 script's own visibility flag was 0 (the flags of a room's recycled objects are not trustworthy, see
 `src/game/story_draw.h`). Two actors printing the same `at (...)` are drawn on top of each other, and a
-class that never prints a draw line is not drawn at all -- the two halves of a "missing/misplaced prop"
-report, told apart without the game data.
+class that never prints a draw line is **not drawn**: above, the bike is in the cast but has no draw line --
+a prop keeps its own visibility flag (D-126: drawing props on their placement alone put an airship over the
+Character Select screen), so a staged prop with a spoiled flag has to be fixed in the scene data, where the
+log points at the class and the row it needs.
 
 A frame whose rect runs past its atlas is **drawn whole**, sampling past 1.0 with `GL_CLAMP_TO_EDGE`: that
 is what the Dreamcast backend has always done (it has no guard at all, the PVR clamps the sample to the edge

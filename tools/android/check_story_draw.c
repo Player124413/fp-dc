@@ -22,12 +22,7 @@ int main(void) {
     /* the script's own flag */
     expect("a visible actor with an image is drawn", shown(1, 7, 0, 0, 255, 100, 100, 100, 100), 1);
     expect("a visible actor without an image is not", shown(1, -1, 0, 0, 255, 100, 100, 100, 100), 0);
-    /* dv_meet's Carol's bike: a prop with v=0 standing on the cliff next to her. It used to be dropped with
-     * everything else that is not a heroine, which is the "her bike is missing" report. */
-    expect("a prop with v=0 inside the view is drawn", shown(0, 7, 0, 0, 255, 700, 1189, 371, 120), 1);
-    expect("the same prop parked at (-32,-32) stays hidden", shown(0, 7, 0, 0, 255, -32, -32, 371, 120), 0);
-    expect("a prop that is off the view stays hidden", shown(0, 7, 0, 0, 255, 700, 1189, 3000, 120), 0);
-    expect("a prop with no image from the script stays hidden", shown(0, -1, 0, 0, 255, 700, 1189, 371, 120), 0);
+    expect("a prop with v=0 stays hidden", shown(0, 7, 0, 0, 255, 100, 100, 100, 100), 0);
     /* the heroine of dv_meet: v=0, standing on the ground in the view (this is the report) */
     expect("Carol with v=0, standing on screen, is drawn", shown(110, 3, 1, 0, 255, 950, 1189, 371, 120), 1);
     expect("the same actress off the view stays hidden", shown(0, 3, 1, 0, 255, 900, 1189, 900, 120), 0);
