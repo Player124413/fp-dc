@@ -1047,6 +1047,7 @@ static void engine_stop(void) {
     snd_stop_all();
     music_stop();
     snd_free_all();
+    game_snd_forget();                             /* no id / voice table may name a slot of the freed samples */
     engine_ready = 0;
     shell_set_in_game(0);
 }

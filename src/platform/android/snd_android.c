@@ -41,10 +41,33 @@ typedef struct {
     int frames, rate;
     char name[48];
     int used;
+    int gen;                           /* a sample's generation: a handle carries it, so a slot the game freed and
+                                        * another sound took over can never play that other sound (see snd_at) */
 } snd_t;
 
 static snd_t smp[MAX_SND];
 static int nsmp;
+static int snd_gen;
+
+/* A handle is <generation> << 16 | <slot>.  The port keeps the ids' handles in its own tables (snd_handle, the
+ * character's voices, a stage's voices, the on-demand voice slots), and those tables can outlive the samples they
+ * name: engine_stop() frees every sample (snd_free_all) while the tables still hold the old slot numbers, and the
+ * next session's snd_load() hands those slots to other files.  A plain slot number then plays whatever moved in -
+ * report after report of "a man's voice instead of Carol's", "the wrong sound in the character select".  A stale
+ * handle now fails the generation check, so it plays nothing: silence where a bug used to be a stranger's voice. */
+static snd_t *snd_at(int h) {
+    if (h < 0) return NULL;
+    int slot = h & 0xffff;
+    if (slot >= nsmp) return NULL;
+    snd_t *s = &smp[slot];
+    if (!s->used || s->gen != ((h >> 16) & 0xffff)) return NULL;
+    return s;
+}
+static int snd_handle_of(const snd_t *s) { return (s->gen << 16) | (int)(s - smp); }
+static void snd_new_gen(snd_t *s) {
+    if (++snd_gen > 0xffff) snd_gen = 1;          /* 0 never: 0 << 16 | slot must not look like a bare slot */
+    s->gen = snd_gen;
+}
 
 typedef struct {
     const snd_t *s;
@@ -259,7 +282,7 @@ void snd_init_fp(void) { snd_init_state(); }
 
 int snd_load(const char *name) {
     for (int i = 0; i < nsmp; i++)
-        if (smp[i].used && !strcmp(smp[i].name, name)) return i;     /* already resident */
+        if (smp[i].used && !strcmp(smp[i].name, name)) return snd_handle_of(&smp[i]);   /* already resident */
     int slot = -1;
     for (int i = 0; i < nsmp; i++)
         if (!smp[i].used) { slot = i; break; }
@@ -274,17 +297,20 @@ int snd_load(const char *name) {
     int r = load_wav(name, d, sz, &smp[slot]);
     free(d);
     if (r < 0) { smp[slot].used = 0; return -1; }
-    return slot;
+    snd_new_gen(&smp[slot]);
+    return snd_handle_of(&smp[slot]);
 }
 
 void snd_unload(int h) {
-    if (h < 0 || h >= nsmp || !smp[h].used) return;
+    snd_t *s = snd_at(h);
+    if (!s) return;                                 /* a handle of a sample that is already gone: nothing to do */
     pthread_mutex_lock(&mix_lock);
     for (int i = 0; i < MAX_VOICES; i++)
-        if (vox[i].on && vox[i].s == &smp[h]) vox[i].on = 0;
-    free(smp[h].pcm);
-    smp[h].pcm = NULL;
-    smp[h].used = 0;
+        if (vox[i].on && vox[i].s == s) vox[i].on = 0;
+    free(s->pcm);
+    s->pcm = NULL;
+    s->used = 0;
+    s->gen = 0;
     pthread_mutex_unlock(&mix_lock);
 }
 
@@ -312,11 +338,11 @@ static int voice_alloc(void) {
     return best;
 }
 
-static void voice_start(int v, int h, int vol, int pan, int loop, int rate_hz) {
-    if (v < 0 || h < 0 || h >= nsmp || !smp[h].used) return;
+static void voice_start(int v, snd_t *s, int vol, int pan, int loop, int rate_hz) {
+    if (v < 0 || !s) return;
     pthread_mutex_lock(&mix_lock);
     voice_t *o = &vox[v];
-    o->s = &smp[h];
+    o->s = s;
     o->pos = 0;
     o->freq = rate_hz;
     voice_step(o);
@@ -331,22 +357,37 @@ static void voice_start(int v, int h, int vol, int pan, int loop, int rate_hz) {
     snprintf(nm, sizeof nm, "%s", o->s->name);   /* copied here: the slot may be freed after the unlock */
     pthread_mutex_unlock(&mix_lock);
     /* the trace line outside the lock: logcat is not real-time and the audio callback waits on this mutex */
-    if (trace) plat_log("snd: play %s (slot %d) on voice %d, vol %d pan %d%s", nm, h, v, vol, pan,
+    if (trace) plat_log("snd: play %s (slot %d) on voice %d, vol %d pan %d%s", nm, (int)(s - smp), v, vol, pan,
                         loop ? " loop" : "");
 }
 
 void snd_play(int h, int vol, int pan) {
-    if (h < 0 || h >= nsmp || !smp[h].used || !stream) return;
+    snd_t *s = snd_at(h);
+    if (!s || !stream) return;
     int v = voice_alloc();
-    voice_start(v, h, vol < 0 ? 0 : vol > 255 ? 255 : vol, pan < 0 ? 128 : pan, 0, 0);
+    voice_start(v, s, vol < 0 ? 0 : vol > 255 ? 255 : vol, pan < 0 ? 128 : pan, 0, 0);
 }
 
 int snd_loop_start(int h, int vol, int freq) {
-    if (h < 0 || h >= nsmp || !smp[h].used || !stream) return -1;
+    snd_t *s = snd_at(h);
+    if (!s || !stream) return -1;
     int v = voice_alloc();
     if (v < 0) return -1;
-    voice_start(v, h, vol < 0 ? 0 : vol > 255 ? 255 : vol, 128, 1, freq);
+    voice_start(v, s, vol < 0 ? 0 : vol > 255 ? 255 : vol, 128, 1, freq);
     return v;
+}
+
+/* the name of the sample a handle names ("" when the handle is stale): the log says what a menu or a voice plays,
+ * so a report of a wrong sound names the file instead of leaving us guessing */
+int snd_sample_name(int h, char *dst, int cap) {
+    if (!dst || cap <= 0) return 0;
+    dst[0] = 0;
+    snd_t *s = snd_at(h);
+    if (!s) return 0;
+    int n = 0;
+    for (; n < cap - 1 && s->name[n]; n++) dst[n] = s->name[n];
+    dst[n] = 0;
+    return n;
 }
 
 void snd_loop_set(int ch, int vol, int freq) {
@@ -378,6 +419,7 @@ void snd_free_all(void) {
         free(smp[i].pcm);
         smp[i].pcm = NULL;
         smp[i].used = 0;
+        smp[i].gen = 0;                 /* every handle that names this sample is stale from here on */
     }
     pthread_mutex_unlock(&mix_lock);
 }
@@ -587,6 +629,18 @@ void music_volume(int pct) {
 void music_update(void) {}
 
 /* ------------------------------------------------------------------ the mixer */
+/* A hard clamp tears: the music alone sits at ~80% of full scale, so any voice or effect on top of it clipped, and a
+ * clipped mix is heard as a broken, "wrong" soundtrack.  The DC's AICA could clip too, but its music was mixed with
+ * more headroom; this keeps everything below the knee untouched and bends the peaks instead of cutting them. */
+static inline int32_t snd_soft(int32_t x) {
+    const int32_t T = 24000, R = 32767 - T;
+    int32_t a = x < 0 ? -x : x;
+    if (a <= T) return x;
+    int64_t d = a - T;
+    int32_t y = T + (int32_t)((int64_t)R * d / ((int64_t)R + d));   /* approaches 32767 as d grows */
+    return x < 0 ? -y : y;
+}
+
 static void mix(int16_t *dst, int frames) {
     pthread_mutex_lock(&mix_lock);
     pthread_mutex_lock(&mus_lock);
@@ -635,11 +689,20 @@ static void mix(int16_t *dst, int frames) {
         }
         if (music_on) {
             if (avail >= 4) {
-                int i0 = tail, i1 = (tail + 1) % MUS_RING;
-                int32_t a = mus_ring[i0 * 2 + 0], b = mus_ring[i1 * 2 + 0];
-                int32_t c = mus_ring[i0 * 2 + 1], d = mus_ring[i1 * 2 + 1];
-                int32_t fl = a + (int32_t)((b - a) * mus_phase);
-                int32_t fr = c + (int32_t)((d - c) * mus_phase);
+                /* 32 kHz -> the device's rate is a real resample, and a straight line between two source frames leaves
+                 * everything above 16 kHz folded back in: the music then sounds gritty and slightly out of tune on a
+                 * good speaker.  Catmull-Rom through four frames is as cheap and much cleaner. */
+                int i0 = (tail + MUS_RING - 1) % MUS_RING, i1 = tail;
+                int i2 = (tail + 1) % MUS_RING, i3 = (tail + 2) % MUS_RING;
+                const double t = mus_phase, t2 = t * t, t3 = t2 * t;
+                double w0 = -0.5 * t3 + t2 - 0.5 * t;
+                double w1 = 1.5 * t3 - 2.5 * t2 + 1.0;
+                double w2 = -1.5 * t3 + 2.0 * t2 + 0.5 * t;
+                double w3 = 0.5 * t3 - 0.5 * t2;
+                int32_t fl = (int32_t)(mus_ring[i0 * 2 + 0] * w0 + mus_ring[i1 * 2 + 0] * w1 +
+                                       mus_ring[i2 * 2 + 0] * w2 + mus_ring[i3 * 2 + 0] * w3);
+                int32_t fr = (int32_t)(mus_ring[i0 * 2 + 1] * w0 + mus_ring[i1 * 2 + 1] * w1 +
+                                       mus_ring[i2 * 2 + 1] * w2 + mus_ring[i3 * 2 + 1] * w3);
                 l += fl * mg >> 8;
                 r += fr * mg >> 8;
                 mus_phase += src_step;
@@ -653,10 +716,8 @@ static void mix(int16_t *dst, int frames) {
                 starve = 1;
             }
         }
-        if (l > 32767) l = 32767; else if (l < -32768) l = -32768;
-        if (r > 32767) r = 32767; else if (r < -32768) r = -32768;
-        dst[i * 2 + 0] = (int16_t)l;
-        dst[i * 2 + 1] = (int16_t)r;
+        dst[i * 2 + 0] = (int16_t)snd_soft(l);
+        dst[i * 2 + 1] = (int16_t)snd_soft(r);
     }
     if (consumed) {
         pthread_mutex_lock(&mus_lock);

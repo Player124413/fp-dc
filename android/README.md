@@ -137,6 +137,17 @@ music), so the package is the Dreamcast `converted/` tree, unpacked.
   second one (a second consumer of the same rings runs the music at double tempo and starves it). The
   stream is rebuilt if the device takes it away, and the delivery rate is measured once after four seconds:
   if a phone does not run at the rate it reports, the tempo follows the measured rate.
+- A sound handle is `<generation> << 16 | <slot>`: the port's id table and its voice tables keep handles across a
+  session, `engine_stop()` frees every sample, and the next session's `snd_load()` gives those slots to other files.
+  A bare slot number then played whatever moved in, which is how a boss line ended up where Lilac's voice belongs
+  (reports of "a man's voice in the character select" and "when she flies"). A handle of a freed sample now matches
+  no sample and plays nothing; `game_snd_forget()` drops every table when the samples go, and
+  `tools/android/check_audio.c` pins both. The log names the file an id plays, once per id:
+  `snd: id 220 -> sfx/s220.wav` (or `snd: id 220 plays sfx/s99.wav, expected sfx/s220.wav` when a table is stale).
+- The mix is bent, not clipped: the music alone sits near full scale, so a voice or an effect on top of it used to be
+  torn off flat (heard as a broken soundtrack). Below 24000 the sum is untouched, above it a smooth knee takes the
+  peaks; and music is resampled from 32 kHz with a four-point curve instead of a straight line between two frames,
+  which had been folding everything above 16 kHz back into the mix.
 - The tempo chain is the stream rate, the source rate (music 32 kHz, effects 22.05 kHz) and the step per
   output frame; `tools/android/check_audio.c` pins it (a 0.1 s mix must consume 0.1 s of source), together
   with the stream lifetime and the ADPCM layouts.

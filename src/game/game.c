@@ -368,13 +368,30 @@ void voice_play_once(const char *name) {
     vod_next ^= 1;
 }
 
+static uint8_t snd_logged[512];        /* the file an id played, logged once per session (see snd_play_orig) */
 void snd_play_orig(int id, int vol, int pan) {
 #ifdef FP_HOST_ENV
     if (getenv("FP_TRACE_SID")) printf("sid %d\n", id);   /* original sound id, belongs to the next 'f' row */
     if (getenv("FP_SID_MISS") && id >= 0 && id < 512 && snd_handle[id] < 0) {   /* sounds a level plays but has not loaded (session 21) */
         FILE *mf = fopen(getenv("FP_SID_MISS"), "a"); if (mf) { fprintf(mf, "%s %d\n", G.lvdir, id); fclose(mf); } }
 #endif
-    if (id >= 0 && id < 512 && snd_handle[id] >= 0) snd_play(snd_handle[id], vol, pan); }
+    if (id < 0 || id >= 512 || snd_handle[id] < 0) return;
+#ifndef FP_HOST_ENV                             /* the host traces ids itself (FP_TRACE_SID); the device's log is where
+                                             * "which file is that sound?" has to be answered */
+    if (!snd_logged[id]) {                       /* once per id and per session */
+        snd_logged[id] = 1;
+        char nm[48] = "", want[32];
+        snd_sample_name(snd_handle[id], nm, sizeof nm);
+        snprintf(want, sizeof want, "sfx/s%d.wav", id);
+        if (!nm[0]) plat_log("snd: id %d names a sample that is gone\n", id);
+        else if (strcmp(nm, want)) plat_log("snd: id %d plays %s, expected %s\n", id, nm, want);
+        else plat_log("snd: id %d -> %s\n", id, nm);
+    }
+#else
+    (void)snd_logged;
+#endif
+    snd_play(snd_handle[id], vol, pan);
+}
 void snd_group_load(int who) {       /* 0 Lilac (+ voices), 1 Carol, 2 Milla */
     char nm[48];
     if (snd_group == who) return;
@@ -406,10 +423,26 @@ void voice_play(const char *name) {
         if (!strcmp(svox_name[i], name)) { if (svox_handle[i] >= 0) snd_play(svox_handle[i], 255, 128); return; }
 }
 
+/* Every handle this file keeps has to be dropped when the samples behind them are freed: engine_stop() calls
+ * snd_free_all(), the slots then belong to whoever loads next, and a table entry that still names an old slot makes
+ * the game play a different file - a stage voice or a boss line where a heroine's voice belongs.  The platform's
+ * handles also carry a generation (snd_android.c, snd_at), so a stale one is silent even if some table missed this;
+ * this is the belt to go with those braces. */
+void game_snd_forget(void) {
+    for (int i = 0; i < 512; i++) snd_handle[i] = -1;
+    for (int i = 0; i < NVOICES; i++) voice_handle[i] = -1;
+    vod_handle[0] = vod_handle[1] = -1; vod_next = 0;
+    for (int i = 0; i < NSVOX; i++) svox_handle[i] = -1;
+    svox_n = 0;
+    snd_group = -1;
+    snd_stage_cur = NULL; snd_stage_n = -1; snd_stage_dir = NULL;
+    memset(snd_logged, 0, sizeof snd_logged);
+}
+
 int game_init(void) {
     memset(&G, 0, sizeof G);
     char nm[48];
-    for (int i = 0; i < 512; i++) snd_handle[i] = -1;
+    game_snd_forget();                             /* a fresh session starts with no handle at all */
     vmuscr_init();
     save_load();                                   /* memory card (VMU) / host FP_SAVE */
 #ifdef FP_HOST_ENV

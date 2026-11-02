@@ -50,6 +50,8 @@ void   snd_init_fp(void);
 int    snd_load(const char *name);
 void   snd_play(int h, int vol, int pan);
 void   snd_unload(int h);                         /* platform: free a loaded sample (its handle slot is reused) */
+int    snd_sample_name(int h, char *dst, int cap); /* platform: the file a handle names ("": stale or unknown) */
+void   game_snd_forget(void);                     /* game.c: drop every id / voice handle (the samples were freed) */
 int    snd_mem_free_kb(void);                     /* largest free block of sound RAM (KB; -1 on the host) */
 #ifdef FP_HOST_ENV
 long   snd_host_resident(void);                   /* host: bytes of every loaded sample (sound RAM budgets, tests) */

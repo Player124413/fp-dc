@@ -117,6 +117,7 @@ void snd_unload(int h) { if (h >= 0 && h < snd_bytes_n && snd_bytes[h]) { snd_re
 long snd_host_resident(void) { return snd_resident; }
 long snd_host_bytes(int h) { return h >= 0 && h < snd_bytes_n ? (long)snd_bytes[h] : 0; }
 int snd_mem_free_kb(void) { return -1; }
+int snd_sample_name(int h, char *dst, int cap) { (void)h; if (dst && cap > 0) dst[0] = 0; return 0; }
 static int host_loop_ch = 1;
 int snd_loop_start(int h, int vol, int freq) { if (getenv("FP_TRACE_SND")) printf("snd loop %d vol %d freq %d @%d\n", h, vol, freq, cur_frame); return h >= 0 ? host_loop_ch++ : -1; }
 void snd_loop_set(int ch, int vol, int freq) { (void)ch; (void)vol; (void)freq; }

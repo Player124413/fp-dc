@@ -155,7 +155,7 @@ static void check_voice_tempo(void) {
     snprintf(smp[0].name, sizeof smp[0].name, "test");
     mus_f = NULL;
 
-    voice_start(0, 0, 255, 128, 0, 0);
+    voice_start(0, &smp[0], 255, 128, 0, 0);
     if (!vox[0].on) { fail("the voice did not start"); return; }
     mix(out, 24000);                                  /* half a second */
     expect_near((int)(vox[0].pos >> 16), 11025, 40, "a 22050 Hz voice after half a second");
@@ -289,7 +289,7 @@ static void check_long_sample(void) {
     nsmp = 1;
     out_rate = 48000;
     mus_f = NULL;                                     /* the music path stays out of this one */
-    voice_start(0, 0, 230, 128, 0, 0);
+    voice_start(0, &smp[0], 230, 128, 0, 0);
     int16_t out[480 * 2];
     long long want = ((long long)60000 * 48000) / 22050 + 480;
     int done = 0;
@@ -309,6 +309,50 @@ static void check_long_sample(void) {
     smp[0].used = 0; smp[0].pcm = NULL; nsmp = 0;
 }
 
+/* A handle is <generation> << 16 | <slot>: the ids and the voice tables in game.c keep handles across a session,
+ * and engine_stop() frees every sample behind them, so the next session's snd_load() gives those slots to other
+ * files.  A handle that still names an old slot used to play whatever moved in - "a man's voice instead of Carol's",
+ * "the wrong sound in the character select" - and now plays nothing at all. */
+static void check_handle_generation(void) {
+    int16_t *a = calloc(64, 2), *b = calloc(64, 2);   /* snd_unload frees the buffer: not a static */
+    for (int i = 0; i < MAX_SND; i++) { smp[i].used = 0; smp[i].pcm = NULL; smp[i].gen = 0; }
+    for (int i = 0; i < MAX_VOICES; i++) { vox[i].on = 0; vox[i].reserved = 0; }
+    stream = &fake_stream;                            /* snd_play refuses to start anything without an output */
+    mus_f = NULL;
+    nsmp = 1;
+    smp[0].pcm = a; smp[0].frames = 64; smp[0].rate = 22050; smp[0].used = 1;
+    snprintf(smp[0].name, sizeof smp[0].name, "first");
+    snd_new_gen(&smp[0]);
+    int old_h = snd_handle_of(&smp[0]);
+    if (old_h < 0 || (old_h >> 16) == 0) fail("a handle carries no generation (%d)", old_h);
+
+    snd_unload(old_h);                                /* the game frees it ... */
+    smp[0].pcm = b; smp[0].frames = 64; smp[0].used = 1;   /* ... and another file takes the slot */
+    snprintf(smp[0].name, sizeof smp[0].name, "second");
+    snd_new_gen(&smp[0]);
+    int new_h = snd_handle_of(&smp[0]);
+
+    if (snd_at(old_h)) fail("a freed handle still names the sample that took its slot");
+    if (!snd_at(new_h)) fail("the new handle does not name its own sample");
+    snd_play(old_h, 255, 255);
+    for (int i = 0; i < MAX_VOICES; i++)
+        if (vox[i].on) { fail("a stale handle started a voice (voice %d, %s)", i, vox[i].s ? vox[i].s->name : "?"); break; }
+    char nm[48];
+    snd_sample_name(old_h, nm, sizeof nm);
+    if (nm[0]) fail("a stale handle still reports a name (%s)", nm);
+    snd_sample_name(new_h, nm, sizeof nm);
+    if (strcmp(nm, "second")) fail("snd_sample_name gives \"%s\", not the sample's own name", nm);
+    snd_play(new_h, 255, 255);
+    int started = 0;
+    for (int i = 0; i < MAX_VOICES; i++) if (vox[i].on && vox[i].s == &smp[0]) started++;
+    if (!started) fail("a live handle did not start its voice");
+
+    snd_unload(new_h);                                /* frees b */ snd_unload(old_h);
+    nsmp = 0;
+    for (int i = 0; i < MAX_VOICES; i++) vox[i].on = 0;
+    stream = NULL;
+}
+
 int main(void) {
     printf("audio checks\n");
     check_stream_lifetime();
@@ -320,6 +364,7 @@ int main(void) {
     alarm(10);                       /* a deadlocked worker would otherwise hang the whole check */
     check_music_requests();
     check_long_sample();
+    check_handle_generation();
     alarm(0);
     printf("audio %s\n", fails ? "FAILED" : "ok");
     return fails ? 1 : 0;

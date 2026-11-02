@@ -194,6 +194,7 @@ int snd_load(const char *name) {
 }
 void snd_unload(int h) { if (h >= 0 && h < nsfx && sfx[h] != SFXHND_INVALID) { snd_sfx_unload(sfx[h]); sfx[h] = SFXHND_INVALID; } }
 int snd_mem_free_kb(void) { return (int)(snd_mem_available() / 1024); }
+int snd_sample_name(int h, char *dst, int cap) { (void)h; if (dst && cap > 0) dst[0] = 0; return 0; }
 
 void snd_stop_all(void) { snd_sfx_stop_all(); }
 
