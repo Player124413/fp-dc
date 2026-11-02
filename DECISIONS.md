@@ -638,27 +638,18 @@ Android audio path is not the Dreamcast's, not at a race inside it. Both are fix
 `music_play()` for the track that is already playing must not bump the track serial while `music_play_once()` does (both checks fail on the
 old code). D-127's ring ownership and the underrun/track-change log lines stay.
 
-## D-129 (Android): a prop whose traced motion is another object's is not drawn -- the extra sprites of a cutscene
-Reported as "the Android cutscenes are buggy next to the Dreamcast: there are extra sprites" (a screenshot of dv_meet's jungle
-ledge: Carol alone in a quiet line of dialog, dialog box open, and small dark sprites scattered over the foliage that the
-original does not have). The cause is in the script data, not in the renderer: a story room recycles the memory of the objects
-it destroys, and the trace then reports another object's state under the same address. D-12x's rule already stops trusting the
-visibility flag of a *heroine*; a prop still trusted its own flag, and for the corrupted ones the flag is 1 exactly when the
-other object was on screen.
-What the trace cannot fake is geometry at scale. '<t> m <actor> <dx> <dy> <frames>' is that object's velocity for one frame, and
-a scene prop does not reverse a hundred pixels between two frames. dv_meet's explosion actors do it constantly -- "+2213 then
--2213" on consecutive frames at the crash -- and those oscillations end exactly on the heroine's own position, which is why the
-junk lands in the middle of the frame instead of at the crash site (the actors' real placement, (1488,305), is 764 px above the
-camera at that moment and off screen). In dv_meet 21 props (21 of 26 explosion actors that are still marked visible somewhere,
-plus the five sparkles) are such noise, and they are the "extra sprites".
-The rule: `story_actor_shown()` counts the script's reversals of more than STORY_FLIP_PX (200 px) between consecutive 'm'
-entries, and a *prop* with STORY_FLIPS_JUNK (2) of them is not drawn at all, whatever its flag says. Heroines are exempt -- their
-motion is equally noisy (Carol reverses 133 times in dv_meet) and their row is what the scene stages, so D-126's placement rule
-still draws them. The rule is per actor and per scene, computed once in csx_load(), and each hidden prop says so in the log
-('story <scene>: <class> (actor <n>) is not drawn: the script reverses its motion <n> times'), which is the answer to the next
-report of the same kind. Across the committed scripts it flags 201 props in 10 rooms (dv_meet, dv_crash, sf_camp, sf_army,
-pl_final_message, tb_brevon, tb_torture and their variants) -- the rooms whose traces show the recycling at all -- and no room
-loses a heroine or a prop that moves for real (`npcsyntax_3980`'s charge in sg_intruders reverses twice but not after 200 px
-steps: it keeps its flag).
-`tools/android/check_story_draw.c` pins the three cases: a prop with v=1 that the script reverses is hidden, one reversal is
-still motion (the prop keeps its flag), and a heroine the script reverses 133 times is drawn by her placement.
+## D-130 (Android): the last cutscene change is taken back at the user's request; the cutscene code is the state before it
+Reported after D-129 with a screenshot of dv_meet and the words "missing Carol sprite in this scene ... in the Sega Dreamcast version
+there was nothing like this -- roll the cutscene code back to how it was, and leave the rest alone". The change is reverted whole:
+`src/game/story_draw.h`, `src/game/cutscene.c` and `src/game/cutscene.h` are byte-identical to 948a51b again (the state of the build
+before it), `tools/android/check_story_draw.c` loses the three flip cases, and the audio work of D-127/D-128 is untouched.
+It has to be said plainly, because it decides what to look at next: that rule could not remove a heroine. `story_actor_shown()` tested
+`!skin` first (a heroine was exempt) and only then the flag, so `playerskin*` actors were drawn exactly as before -- the D-12x placement
+rule still draws Carol with her visibility flag at 0, which is what "the missing heroine" in dv_meet originally was about. The revert is
+therefore a return to the previous picture, not a fix for a missing sprite: those two reports (extra sprites, then a missing heroine) are
+two halves of the same corruption in the trace, and neither can be settled from a screenshot alone.
+What is already in the build for it: the story scene writes its **cast** (class, layer, skin) and the first draws of every scene with the
+spot each actor lands on (D-126), and a scene that hides a prop says so. The log of one pass through the scene therefore names every actor
+that was drawn and where -- a `playerskincarol` line with a position in the view is drawn, and one that is missing from the draw lines is
+the bug to chase. Until that log arrives, no rule is widened again: D-126 (widening the rule to props) and D-129 (hiding props by their
+motion) both made cutscenes worse, and both were taken back.

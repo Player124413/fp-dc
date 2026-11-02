@@ -143,7 +143,6 @@ static struct {
     int decl_left, trace_left;                            /* actor table / first draws still to be written into the log */
     struct { char cls[48];                                /* the traced class ("carolbike_450"): the log's name for an actor */
              int handle, layer, x, y, vis, row, mdx, mdy, mn, locked, add, alpha, skin, said; int16_t lx0, ly0, lx1, ly1, lt, ln;
-             uint8_t flips, said_junk; int16_t pdx, pdy;   /* the script's motion: how often it reverses (see story_draw.h) */
              int16_t rk, rb, rc, ra; float ang; uint8_t flip; int mvo, mvl; animator_t an; } a[CSX_ACTORS];
     char *mv; int mv_n, mv_cap;                           /* session 26: the 'mv' paths (one character a frame) */
     struct { int on; double A, dA, D, dD, E, F, H, J, L; } rig;   /* session 26: the holo dragon rig (the neck's values, PL6 13342-13344) */
@@ -211,23 +210,7 @@ int csx_load(const char *path) {
             if (seg < 0 || n < 2 || t < 0 || t > 65535) { bad = 1; break; }
             x->t = (uint16_t)t;
             if (!strcmp(op, "p")) { x->op = E_P; x->a = (uint8_t)v0; x->v[0] = (int16_t)v1; x->v[1] = (int16_t)v2; }
-            else if (!strcmp(op, "m")) {
-                x->op = E_M; x->a = (uint8_t)v0; x->v[0] = (int16_t)v1; x->v[1] = (int16_t)v2; x->v[2] = (int16_t)v3;
-                /* '<t> m <actor> <dx> <dy> <frames>': this object's velocity for one frame.  A room recycles the
-                 * memory of what it destroys, so the trace writes another object's velocity here, and the two
-                 * objects sit far apart: the value reverses by hundreds of pixels from one frame to the next,
-                 * over and over.  Real motion does not (a walk is a few pixels a frame, a charge keeps its
-                 * sign).  Counting the reversals is what tells a prop of this scene from the noise -- the
-                 * explosions and sparkles that used to appear over a quiet line of dialog (story_draw.h). */
-                if (x->a < X.nact) {
-                    int dx = v1, dy = v2;
-                    int fx = dx && X.a[x->a].pdx && (dx > 0) != (X.a[x->a].pdx > 0) && (dx > STORY_FLIP_PX || dx < -STORY_FLIP_PX);
-                    int fy = dy && X.a[x->a].pdy && (dy > 0) != (X.a[x->a].pdy > 0) && (dy > STORY_FLIP_PX || dy < -STORY_FLIP_PX);
-                    if ((fx || fy) && X.a[x->a].flips < 250) X.a[x->a].flips++;
-                    X.a[x->a].pdx = (int16_t)(dx > 32767 ? 32767 : dx < -32768 ? -32768 : dx);
-                    X.a[x->a].pdy = (int16_t)(dy > 32767 ? 32767 : dy < -32768 ? -32768 : dy);
-                }
-            }
+            else if (!strcmp(op, "m")) { x->op = E_M; x->a = (uint8_t)v0; x->v[0] = (int16_t)v1; x->v[1] = (int16_t)v2; x->v[2] = (int16_t)v3; }
             else if (!strcmp(op, "l")) { x->op = E_L; x->a = (uint8_t)v0; x->v[0] = (int16_t)v1; x->v[1] = (int16_t)v2; x->v[2] = (int16_t)v3; }   /* <t> l <n> <x> <y> <k> */
             else if (!strcmp(op, "i")) { x->op = E_I; x->a = (uint8_t)v0; x->v[0] = (int16_t)v1; x->v[1] = (int16_t)v2; x->v[2] = (int16_t)v3; }
             else if (!strcmp(op, "v")) { x->op = E_V; x->a = (uint8_t)v0; x->v[0] = (int16_t)v1; }
@@ -588,23 +571,11 @@ int csx_update(const input_t *in) {
  * original hides one are still honoured: the off-map sentinel (-32, -32), anything out of the view, a zero alpha, and
  * an actor the story code drives itself (--chsel locks the select's slots). Everything else keeps its 'v' flag: a
  * gimmick or an effect is a prop of some other scene of the room, drawn by its own animation, not a character. */
-int csx_draw_rule(int vis, int row, int skin, int locked, int alpha, int wx, int wy, float sx, float sy, int flips) {
-    return story_actor_shown(vis, row, skin, locked, alpha, wx, wy, sx, sy, SCREEN_W, SCREEN_H, flips);
+int csx_draw_rule(int vis, int row, int skin, int locked, int alpha, int wx, int wy, float sx, float sy) {
+    return story_actor_shown(vis, row, skin, locked, alpha, wx, wy, sx, sy, SCREEN_W, SCREEN_H);
 }
 static int actor_shown(int k, float x, float y) {
-    if (!csx_draw_rule(X.a[k].vis, X.a[k].row, X.a[k].skin, X.a[k].locked, X.a[k].alpha, X.a[k].x, X.a[k].y, x, y, X.a[k].flips)) {
-        /* a prop the trace spoils is not drawn: name it, so the next screenshot of "extra sprites" has an answer */
-        if (!X.a[k].skin && X.a[k].row >= 0 && X.a[k].flips >= STORY_FLIPS_JUNK && !X.a[k].said_junk) {
-            X.a[k].said_junk = 1;
-#ifdef FP_HOST_ENV
-            printf("story: %s (actor %d) is not drawn: the script reverses it %d times\n", X.a[k].cls, k, X.a[k].flips);
-#else
-            plat_log("story %s: %s (actor %d) is not drawn: the script reverses its motion %d times (another object's data in this trace)",
-                     X.name, X.a[k].cls, k, X.a[k].flips);
-#endif
-        }
-        return 0;
-    }
+    if (!csx_draw_rule(X.a[k].vis, X.a[k].row, X.a[k].skin, X.a[k].locked, X.a[k].alpha, X.a[k].x, X.a[k].y, x, y)) return 0;
     if (!X.a[k].vis && !X.a[k].said) {                    /* a report of a missing heroine needs this line */
         X.a[k].said = 1;
 #ifdef FP_HOST_ENV
