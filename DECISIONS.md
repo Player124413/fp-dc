@@ -725,3 +725,13 @@ screen, and what the original shows there, needs the reference (a video or a scr
 added to rows.json as the class/anim the original used - no rule is invented in the player.
 `make -C tools/android story` now prints both: the cover verdict (fatal) and the row count (`--rows` lists every missing
 one), so this cannot drift unnoticed.
+
+## D-135 (Android): the scene's log names the level it actually draws, its camera and its piece count
+D-132's line said `story rm5_spade: room st29 g4 0, 0 objects on json layers 0-1 ...`. Read on a device log it looks like
+the scene found an empty room, which is the opposite of what it means: an in-stage scene (`story_inline_begin` from
+`rm_mantalith.c`) draws the **loaded stage**, and `st29` is only the script's own room number. The line now reads
+`story rm5_spade: scene room st29, level rm5, g4 0, camera 3275,768, 0 objects on json layers 0-1, N pieces, the bank has
+M rows`, so a log answers three questions at once: which stage answered the picture, where the camera stood, and whether
+that stage has any pieces there at all (0 pieces + 0 objects = nothing behind the actors; pieces > 0 = an overlay would be
+the suspect, not the level).
+No drawing rule changed: this is the same diagnostic only, `cutscene.c` untouched (still `cb30968`).

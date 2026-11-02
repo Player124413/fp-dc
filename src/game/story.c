@@ -387,8 +387,8 @@ static void pause_update(const input_t *in) {
 extern int obj_drawn_pass0;                          /* objects.c: what the json layer 0-1 pass drew last frame */
 static void scene_log(int id) {
     if (id < 0 || id >= nsc) return;
-    plat_log("story %s: room st%d g4 %d, %d objects on json layers 0-1 (the room's backdrop), the room's bank has %d rows",
-             SC[id].name, SC[id].room, SC[id].g4, obj_drawn_pass0, G.ens.nanims);
+    plat_log("story %s: scene room st%d, level %s, g4 %d, camera %d,%d, %d objects on json layers 0-1, %d pieces, the bank has %d rows",
+             SC[id].name, SC[id].room, G.lvdir, SC[id].g4, (int)G.camx, (int)G.camy, obj_drawn_pass0, G.lvl.npieces, G.ens.nanims);
 }
 void story_update(const input_t *in) {
     G.frame++; G.frame_draw_t++;
