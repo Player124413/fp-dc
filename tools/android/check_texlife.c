@@ -36,6 +36,27 @@ int glTexImage2D() { return 0; }
 int glTexSubImage2D() { return 0; }
 int glCompressedTexImage2D() { return 0; }
 int glPixelStorei() { return 0; }
+/* the picture the sprite dump reads back: a synthetic 426x240 view, top-down (row 0 = the top) */
+#define FAKE_W 426
+#define FAKE_H 240
+static uint8_t fake_screen[FAKE_W * FAKE_H * 4];
+static int read_calls;
+static const uint8_t zero4[4];
+int glReadPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum fmt, GLenum type, void *buf) {
+    (void)fmt; (void)type;
+    read_calls++;
+    uint8_t *d = buf;
+    for (int r = 0; r < h; r++) {                     /* the target's row 0 is the BOTTOM of the picture */
+        int row = FAKE_H - 1 - (y + r);
+        for (int c = 0; c < w; c++) {
+            int col = x + c;
+            const uint8_t *src = (row >= 0 && row < FAKE_H && col >= 0 && col < FAKE_W)
+                                 ? &fake_screen[((size_t)row * FAKE_W + col) * 4] : zero4;
+            memcpy(d + ((size_t)r * w + c) * 4, src, 4);
+        }
+    }
+    return 0;
+}
 int glGetError() { return 0; }
 int glUseProgram() { return 0; }
 int glCreateShader() { return 0; }
@@ -227,6 +248,92 @@ int main(void) {
         check(strstr(logbuf, "|########|") != NULL, "the rows that draw are marked '#'");
         check(strstr(logbuf, "|--------|") != NULL, "the rows the palette hides are marked '-'");
         check(strstr(logbuf, "|........|") != NULL, "the empty rows are marked '.'");
+        r_tex_free(&t);
+    }
+
+    /* 9. the sprite dump answers the other half of "she is not drawn all the way": not what the sheet holds
+     *    but what the picture got. It reads the target back before her quad, right after it and at the end of
+     *    the frame; the three masks have to point at the texels the atlas draws and the picture does not
+     *    (her own quad left them empty) and at the ones something repainted after her. */
+    {
+        tex_t t;
+        uint8_t pal[8 + 512];
+        memset(pal, 0, sizeof pal);
+        memcpy(pal, "FPPL", 4);
+        {   uint16_t hdr[2] = { 0, 1 }, e1 = 0x801f;
+            memcpy(pal + 4, hdr, 4);
+            memcpy(pal + 10, &e1, 2);                 /* entry 1 opaque, everything else transparent */
+        }
+        fptx_make(buf, 8, 8, 1);                       /* an 8x8 sheet that draws in every texel */
+        check(load(&t, buf, sizeof buf) == 0, "a sheet for the sprite dump loads");
+        r_pal_load(pal, sizeof pal);
+        memset(fake_screen, 0, sizeof fake_screen);    /* the picture before her: nothing drawn */
+        win_w = VIEW_W; win_h = VIEW_H;                /* a window the size of the view: the dump's
+                                                        * SHARP-path scale/offset is the identity, so the
+                                                        * read-back coordinates are the view's own */
+        loglen = 0; logbuf[0] = 0;
+        read_calls = 0;
+        r_begin();
+        r_dump_begin(&t, 0, 0, 8, 8, 100, 100, 0, 0, 0, 0, "idle", 0);
+        check(read_calls == 1, "the dump reads the target back before her quads");
+        check(strstr(logbuf, "sprite dump: anim \"idle\" frame 0, rect (0,0 8x8)") != NULL,
+              "and names the frame it is about");
+        /* her quads reach only half of the box: the rest of the frame stayed empty on screen */
+        for (int y = 100; y < 108; y++)
+            for (int x = 100; x < 104; x++) memset(&fake_screen[((size_t)y * FAKE_W + x) * 4], 0xff, 4);
+        r_dump_drawn();
+        check(read_calls == 2, "and again right after them");
+        check(strstr(logbuf, "sprite dump: atlas  |########|") != NULL, "the atlas' own mask is printed next to it");
+        check(strstr(logbuf, "sprite dump: drawn  |####....|") != NULL,
+              "the texels the picture did not get stay '.', the four it got are '#'");
+        /* then something is drawn over her: rows 0..1 of her box change after her quads */
+        r_sprite(&t, 0, 0, 8, 8, 100, 100, 8, 8, 0, 0xffffffff);
+        check(strstr(logbuf, "after her: atlas") != NULL, "a sprite drawn over her is named");
+        for (int y = 100; y < 102; y++)
+            for (int x = 100; x < 108; x++) memset(&fake_screen[((size_t)y * FAKE_W + x) * 4], 0x11, 4);
+        r_dump_frame_end();
+        check(read_calls == 3, "and once more at the end of the frame");
+        check(strstr(logbuf, "sprite dump: over   |++++++++|") != NULL, "the repainted rows are marked '+'");
+        check(strstr(logbuf, "sprite dump: over   |........|") != NULL, "and the untouched ones stay '.'");
+        r_tex_free(&t);
+    }
+
+    /* 10. both triangles of a quad have to wind the SAME way. The batch's index buffer splits every quad
+     *     as (0,1,2) + (0,2,3), i.e. TL,TR,BR + TL,BR,BL. The rotated path used to hand it TL,TR,BL,BR, so
+     *     the two triangles wound in opposite directions and back-face culling dropped one of them: the
+     *     sprite lost a clean half along the quad's diagonal and the background showed through the
+     *     straight edge -- "she is cut off, and only on the phone". push_quad() always had it right, which
+     *     is why only sprites drawn with a rotation (the heroine's lean, most enemies) were cut. */
+    {
+        tex_t t;
+        fptx_make(buf, 8, 8, 1);
+        check(load(&t, buf, sizeof buf) == 0, "a sheet for the winding test loads");
+        /* signed area of a triangle (screen y points down, so one sign is "front" for both) */
+        #define AREA2(p, q, r) (((q).x - (p).x) * ((r).y - (p).y) - ((q).y - (p).y) * ((r).x - (p).x))
+        r_begin();
+        r_sprite(&t, 0, 0, 8, 8, 100, 100, 8, 8, 0, 0xffffffff);
+        check(nquad == 1, "an upright sprite pushes one quad");
+        if (nquad == 1) {
+            float s1 = AREA2(vbuf[0], vbuf[1], vbuf[2]), s2 = AREA2(vbuf[0], vbuf[2], vbuf[3]);
+            check((s1 > 0) == (s2 > 0) && s1 != 0 && s2 != 0, "its two triangles wind the same way");
+        }
+        r_begin();
+        r_sprite_rot(&t, 0, 0, 8, 8, 100, 100, 4, 4, 20, 0, 0xffffffff);
+        check(nquad == 1, "a rotated sprite pushes one quad");
+        if (nquad == 1) {
+            float s1 = AREA2(vbuf[0], vbuf[1], vbuf[2]), s2 = AREA2(vbuf[0], vbuf[2], vbuf[3]);
+            check((s1 > 0) == (s2 > 0) && s1 != 0 && s2 != 0,
+                  "and so do its, or culling cuts the sprite in half");
+            check(vbuf[0].u == 0.0f && vbuf[2].u == 1.0f && vbuf[3].u == 0.0f && vbuf[1].v == 0.0f,
+                  "with the frame's own texture coordinates on the same corners");
+        }
+        /* the same for a mirrored draw and for a draw under a scale (both only reachable through here) */
+        r_begin();
+        r_sprite_rot(&t, 0, 0, 8, 8, 100, 100, 4, 4, -35, 1, 0xffffffff);
+        if (nquad == 1) {
+            float s1 = AREA2(vbuf[0], vbuf[1], vbuf[2]), s2 = AREA2(vbuf[0], vbuf[2], vbuf[3]);
+            check((s1 > 0) == (s2 > 0), "a mirrored, mirrored-and-leaning quad keeps one winding");
+        }
         r_tex_free(&t);
     }
 

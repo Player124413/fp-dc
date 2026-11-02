@@ -322,6 +322,36 @@ are named as ranges before the picture. This is what a "she is not drawn all the
 in the middle of the `#` area is the sheet, a `-` band there is the palette, and an all-`#` picture means
 the frame is fine and something else is covering her.
 
+### What the picture got (the sprite dump)
+
+The atlas says what the sheet holds; it cannot say what reached the screen, and "she is cut off" is the
+same sentence for three different bugs. So the first eight **distinct poses** of a level are read back off
+the target three times around her quads -- before them, right after them, and at the end of the frame -- and
+the three masks are written next to the atlas', one character per texel of the same rect:
+
+```
+sprite dump: anim "idle" frame 0, rect (611,65 35x48) of 1024x256, at (12,168), hotspot (17,47), rot 0.0, flip 0, box (0,121 36x49)
+sprite dump: atlas  |......####....#######..##..........|
+sprite dump: drawn  |......####....#######..##..........|
+sprite dump: over   |...................................|
+sprite dump: atlas  1680 texels marked '#', 0 unchanged, 0 outside the picture
+sprite dump: drawn  1680 texels marked '#', 0 unchanged, 0 outside the picture
+sprite dump: over   0 texels marked '+', 1680 unchanged, 0 outside the picture
+```
+
+* `atlas` -- what the sheet holds (`#` draws, `-` hidden by the palette, `.` empty), the same mask as
+  `sprite report` above, printed for the exact draw the other two belong to.
+* `drawn` -- `#` where the picture **changed** when her quads were drawn: her own coverage, as the GPU saw
+  it. A texel the atlas marks and `drawn` does not is a pixel her quad never wrote.
+* `over` -- `+` where the picture changed again *after* her quads: something was drawn on top of her. Every
+  sprite or rect that lands on her box in that window is named right before it
+  (`sprite dump: sprite after her: atlas 3 (512x256) rect (0,64 64x32) at (240,96) 64x32 additive 0 invert 0`).
+
+Reading the three together answers the report without guessing: an all-`#` `drawn` with an all-`.` `over` is
+a correct frame, a `drawn` that follows the atlas but an `over` with `+` on a straight edge is an overdraw,
+and a `drawn` that is missing a slab the atlas has is the quad itself. Only the first eight poses of a level
+are dumped (three read-backs each, ~150 lines); the rest of the level logs nothing.
+
 A frame whose rect runs past its atlas is **drawn whole**, sampling past 1.0 with `GL_CLAMP_TO_EDGE`: that
 is what the Dreamcast backend has always done (it has no guard at all, the PVR clamps the sample to the edge
 of the texture), and cutting the quad here instead used to lose a strip of the picture that was whole on the

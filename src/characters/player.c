@@ -1397,7 +1397,16 @@ void player_draw(const player_t *p) {
     const frame_t *f = anim_frame(&p->an);
     player_trace("skin", p->an.b, &p->an, f, draw_flip, p->rot);
     double hxp = p->x, hyp = p->y - ORIG_REF_DY;   /* RE 1517: the skin sits at (int X, int Y) */
+    {   /* the atlas report says what the sheet holds under this frame; the sprite dump says what the
+         * picture gets from the same draw (the first frames of a level, see r_dump_begin) */
+        int tv = 0;
+        const tex_t *tt = bank_frame_tex(p->an.b, f, &tv);
+        const char *nm = (p->an.anim >= 0 && p->an.anim < p->an.b->nanims) ? p->an.b->anims[p->an.anim].name : "?";
+        if (tt) r_dump_begin(tt, f->u, tv, f->w, f->h, floor(hxp - G.camx), floor(hyp - G.camy),
+                             f->hx, f->hy, p->rot, draw_flip, nm, p->an.frame);
+    }
     frame_draw_rot(p->an.b, f, floor(hxp - G.camx), floor(hyp - G.camy), p->rot, draw_flip, p->tint > 0 ? (p->tint_argb ? p->tint_argb : 0xff80ff80) : 0xffffffff);   /* set_blend_color(0x80ff80) */
+    r_dump_drawn();
     if (is_milla()) milla_draw_cube();
     fx_draw();
 }

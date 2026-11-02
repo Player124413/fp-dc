@@ -195,6 +195,17 @@ int    r_tex_alive(const tex_t *t);    /* 1 = this handle still refers to a load
  * has data but no visible palette entry, how much is empty, and where. Only the Android backend keeps the
  * texel indices for this (the Dreamcast build answers "not kept"), and only a few calls of it are made. */
 int    r_sprite_report(const tex_t *t, int u, int v, int uw, int vh);
+/* The other half of the same question: the atlas report says what the sheet holds under a frame, this says
+ * what the picture got. The Android backend reads the target back before the frame's quad, right after it
+ * and at the end of the frame, and prints the three masks next to the atlas' (one character per texel), so
+ * "the sprite is not drawn all the way" is answered from the log: a texel the atlas draws and "drawn" does
+ * not means the quad left it empty, a texel "drawn" has and "over" repaints means something is drawn over
+ * her -- and the log names it. A few frames per level only. Other backends draw the same data with no
+ * readable target and do nothing. */
+void   r_dump_begin(const tex_t *t, int u, int v, int uw, int vh, float px, float py, float hx, float hy,
+                    float angle, int flip, const char *anim, int frame);
+void   r_dump_drawn(void);
+void   r_dump_frame_end(void);
 void   r_reset(void);                 /* free all textures (level change) */
 void   r_tint(float x, float y, float w, float h, uint32_t rgb);   /* dst *= (1 - rgb) */
 void   r_set_additive(int on);       /* following sprites drawn additively (Chowdren shader 0x20) */

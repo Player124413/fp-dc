@@ -50,6 +50,7 @@ typedef float GLclampf; typedef void GLvoid;
 #define GL_TRIANGLES 0x1028
 #define GL_TRUE 1
 #define GL_UNPACK_ALIGNMENT 0x102a
+#define GL_PACK_ALIGNMENT 0x102f
 #define GL_UNSIGNED_BYTE 0x102b
 #define GL_UNSIGNED_SHORT 0x102c
 #define GL_VERTEX_SHADER 0x102d
@@ -94,6 +95,7 @@ int glGetShaderiv();
 int glGetUniformLocation();
 int glLinkProgram();
 int glPixelStorei();
+int glReadPixels();
 int glShaderSource();
 int glTexImage2D();
 int glTexParameteri();

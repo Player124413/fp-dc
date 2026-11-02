@@ -180,6 +180,17 @@ int r_sprite_report(const tex_t *t, int u, int v, int uw, int vh) {
     return -1;
 }
 
+/* The sprite dump compares the picture with the atlas by reading the target back (render_gles.c). The
+ * Dreamcast draws the same quads straight to the PVR and the host painter has no device data to compare,
+ * so both draw exactly the same thing and say nothing. */
+void r_dump_begin(const tex_t *t, int u, int v, int uw, int vh, float px, float py, float hx, float hy,
+                  float angle, int flip, const char *anim, int frame) {
+    (void)t; (void)u; (void)v; (void)uw; (void)vh; (void)px; (void)py; (void)hx; (void)hy;
+    (void)angle; (void)flip; (void)anim; (void)frame;
+}
+void r_dump_drawn(void) {}
+void r_dump_frame_end(void) {}
+
 void r_rect(float x, float y, float w, float h, uint32_t argb) {
     int x0 = (int)floorf(x), y0 = (int)floorf(y), x1 = (int)floorf(x + w), y1 = (int)floorf(y + h);
     for (int sy = y0 < 0 ? 0 : y0; sy < y1 && sy < SCREEN_H; sy++)

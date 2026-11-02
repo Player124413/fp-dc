@@ -55,6 +55,10 @@ typedef struct {
 
 static gtex_t texs[MAXTEX];
 static int ntex;
+static void r_dump_forget(void);           /* the sprite dump (see "she is not drawn all the way") */
+static void dbg_over(const char *what, const tex_t *t, int u, int v, int uw, int vh,
+                     float x, float y, float w, float h);
+void r_dump_frame_end(void);
 static uint16_t pals[4][256];
 static GLuint pal_tex;
 
@@ -565,6 +569,7 @@ void r_tex_free(tex_t *t) {
 
 void r_reset(void) {
     flush();
+    r_dump_forget();                       /* a new level: the sprite dump starts over */
     vtex_kb = 0;
     for (int i = 0; i < ntex; i++) {
         if (texs[i].id) { glDeleteTextures(1, &texs[i].id); texs[i].id = 0; }
@@ -609,6 +614,9 @@ void r_begin(void) {
     rscale = rxscale = 1.f;
     r_stat_polys = 0;
     glBindVertexArray(0);                 /* the shell UI leaves its own VAO bound after ui_begin() */
+    /* every quad is two triangles and they are wound alike (see r_sprite_rot), so nothing here needs
+     * culling: leaving it on is one line of shell-UI state away from losing a triangle of every sprite */
+    glDisable(GL_CULL_FACE);
     in_fbo = opt_mode == RGL_PIXEL && fbo && fbo_w == VIEW_W;
     {
         view_rect_t r = view_fit(win_w, win_h, VIEW_W, VIEW_H, opt_letterbox);
@@ -637,6 +645,7 @@ void (*rgl_frame_end_hook)(void);
 
 void r_end(void) {
     flush();
+    r_dump_frame_end();                    /* the read-back needs the target still bound */
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     if (rgl_frame_end_hook) rgl_frame_end_hook();
 }
@@ -738,6 +747,7 @@ void r_sprite(const tex_t *t, int u, int v, int uw, int vh, float x, float y, fl
         if (u < 0 || v < 0 || u + uw > g->w || v + vh > g->h) clip_log(t, u, v, uw, vh);
         if (uw <= 0 || vh <= 0) return;
     }
+    dbg_over("sprite", t, u, v, uw, vh, x, y, w, h);
     bind_tex(t);
     set_blend(add_on ? 1 : 0);
     float iw = 1.0f / (float)texs[t->id].w, ih = 1.0f / (float)texs[t->id].h;
@@ -760,14 +770,20 @@ void r_sprite_rot(const tex_t *t, int u, int v, int uw, int vh, float px, float 
     float ey = (hy > vh - hy ? hy : vh - hy) * rscale;
     float r = sqrtf(ex * ex + ey * ey) + 2;
     if (px + r < 0 || py + r < 0 || px - r >= SCREEN_W || py - r >= SCREEN_H) return;
+    dbg_over("sprite_rot", t, u, v, uw, vh, px - r, py - r, 2 * r, 2 * r);
     bind_tex(t);
     set_blend(add_on ? 1 : 0);
     float iw = 1.0f / (float)texs[t->id].w, ih = 1.0f / (float)texs[t->id].h;
     float u0 = (float)u * iw, u1 = (float)(u + uw) * iw, v0 = (float)v * ih, v1 = (float)(v + vh) * ih;
     if (flip) { float tmp = u0; u0 = u1; u1 = tmp; }
     float a = angle * 0.017453293f, c = cosf(a) * rscale, s = sinf(a) * rscale;
-    float lx[4] = { -hx, uw - hx, -hx, uw - hx }, ly[4] = { -hy, -hy, vh - hy, vh - hy };
-    float tu[4] = { u0, u1, u0, u1 }, tv[4] = { v0, v0, v1, v1 };
+    /* The four corners go in the order the shared index buffer splits (0,1,2 + 0,2,3 = TL,TR,BR + TL,BR,BL).
+     * Written as TL,TR,BL,BR the two triangles wind in OPPOSITE directions, so back-face culling drops one
+     * of them and the sprite loses a clean half along the quad's diagonal -- "she is cut off" with the
+     * background showing through the straight edge. push_quad() has always used the right order, which is
+     * why only sprites drawn rotated were cut. */
+    float lx[4] = { -hx, uw - hx, uw - hx, -hx }, ly[4] = { -hy, -hy, vh - hy, vh - hy };
+    float tu[4] = { u0, u1, u1, u0 }, tv[4] = { v0, v0, v1, v1 };
     if (nquad >= MAXQUAD) flush();
     vtx_t *vt = &vbuf[nquad * 4];
     for (int i = 0; i < 4; i++) {
@@ -860,9 +876,205 @@ int r_sprite_report(const tex_t *t, int u, int v, int uw, int vh) {
     return 0;
 }
 
+/* --------------------------------------------------------------- "she is not drawn all the way"
+ *
+ * The atlas report says whether the sheet holds anything under a frame. It cannot say whether that
+ * content reached the picture: "the sprite is cut off" is the same sentence for three different bugs --
+ * the sheet is empty there, her own quad left the texel empty, or something was drawn over her after her.
+ *
+ * So the target is read back three times around the heroine's quads: before them, right after them and at
+ * the end of the frame. Every read-back is printed as a mask over the same texels as the atlas', one
+ * character per texel, and the three masks answer the three cases:
+ *     the atlas prints '#' where "drawn" prints '.'       -> her own quad put no pixel there
+ *     "drawn" prints '#' where "over" prints '#'          -> something repainted her; the log names it
+ * ("over" prints '+' where the pixel changed after her quads, so a clean frame is a wall of '.')
+ *
+ * The read-back has to sample the target the frame is really drawn into, which is why it needs the box in
+ * the target's own pixels: the FBO is the view 1:1, a SHARP frame goes straight to the window through
+ * view_transform(). Only a few frames per level are dumped (DBG_DUMPS): three read-backs each and ~150
+ * lines of log is a diagnostic, not something to leave running. */
+#define DBG_DUMPS 8                          /* distinct poses of the level that get a dump */
+typedef struct { uint8_t *px; int w, h, x0, y0; } dbgimg_t;   /* rows as glReadPixels returns them */
+static dbgimg_t dbg_before, dbg_after, dbg_end_img;
+static int dbg_dumps_left = DBG_DUMPS, dbg_active, dbg_watch, dbg_over_logged;
+static uint32_t dbg_seen[DBG_DUMPS];         /* the poses already dumped: the log has to hold the one
+                                              * that looks wrong, not just the first three draws */
+static int dbg_nseen;
+static int dbg_uw, dbg_vh, dbg_flip, dbg_u, dbg_v;
+static float dbg_px, dbg_py, dbg_hx, dbg_hy, dbg_ang;
+static float dbg_bx0, dbg_by0, dbg_bx1, dbg_by1;             /* her box in view pixels */
+static const gtex_t *dbg_g;
+static char dbg_anim[20];
+
+static void dbg_release(dbgimg_t *s) { free(s->px); s->px = NULL; s->w = s->h = 0; }
+/* a level change: every dump starts over (r_reset) */
+static void r_dump_forget(void) {
+    dbg_release(&dbg_before); dbg_release(&dbg_after); dbg_release(&dbg_end_img);
+    dbg_active = dbg_watch = 0;
+    dbg_dumps_left = DBG_DUMPS;
+    dbg_nseen = 0;
+}
+
+/* the box the sprite covers: the same arithmetic as r_sprite_rot(), so a rotated draw is covered too */
+static void dbg_box(void) {
+    float c = cosf(dbg_ang * 0.017453293f) * rscale, s = sinf(dbg_ang * 0.017453293f) * rscale;
+    float lx[4] = { -dbg_hx, dbg_uw - dbg_hx, -dbg_hx, dbg_uw - dbg_hx };
+    float ly[4] = { -dbg_hy, -dbg_hy, dbg_vh - dbg_hy, dbg_vh - dbg_hy };
+    dbg_bx0 = dbg_by0 = 1e9f; dbg_bx1 = dbg_by1 = -1e9f;
+    for (int i = 0; i < 4; i++) {
+        float x = dbg_px + lx[i] * rxscale * c + ly[i] * s;
+        float y = dbg_py - lx[i] * rxscale * s + ly[i] * c;
+        if (x < dbg_bx0) dbg_bx0 = x;
+        if (y < dbg_by0) dbg_by0 = y;
+        if (x > dbg_bx1) dbg_bx1 = x;
+        if (y > dbg_by1) dbg_by1 = y;
+    }
+    if (dbg_bx0 < 0) dbg_bx0 = 0;
+    if (dbg_by0 < 0) dbg_by0 = 0;
+    if (dbg_bx1 > SCREEN_W) dbg_bx1 = SCREEN_W;
+    if (dbg_by1 > SCREEN_H) dbg_by1 = SCREEN_H;
+}
+
+/* read the box the frame is drawn into. The FBO is the view 1:1; the window is not, so the box goes through
+ * the same scale/offset the vertex shader applies (vsx/vsy/vox/voy, set by r_begin). */
+static int dbg_grab(dbgimg_t *s) {
+    int x0 = (int)dbg_bx0, y0 = (int)dbg_by0;
+    int w = (int)dbg_bx1 - x0 + 1, h = (int)dbg_by1 - y0 + 1;
+    if (w <= 0 || h <= 0) return 0;
+    int rx, ry, rw, rh;
+    if (in_fbo) { rx = x0; ry = VIEW_H - (y0 + h); rw = w; rh = h; }
+    else {
+        rx = (int)(x0 * vsx + vox); rw = (int)(w * vsx);
+        ry = win_h - (int)((y0 + h) * vsy + voy); rh = (int)(h * vsy);
+        if (rx < 0) { rw += rx; rx = 0; }
+        if (ry < 0) { rh += ry; ry = 0; }
+        if (rw <= 0 || rh <= 0 || rx + rw > win_w || ry + rh > win_h) return 0;
+    }
+    uint8_t *p = realloc(s->px, (size_t)rw * rh * 4);
+    if (!p) return 0;
+    s->px = p; s->w = rw; s->h = rh; s->x0 = x0; s->y0 = y0;
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(rx, ry, rw, rh, GL_RGBA, GL_UNSIGNED_BYTE, s->px);
+    return 1;
+}
+
+/* the pixel at view coordinate (x, y), or NULL outside the read-back (glReadPixels' row 0 is the bottom) */
+static const uint8_t *dbg_at(const dbgimg_t *s, int x, int y) {
+    if (!s->px) return NULL;
+    int cx = x - s->x0, cy = y - s->y0;
+    if (cx < 0 || cy < 0 || cx >= s->w || cy >= s->h) return NULL;
+    return s->px + ((size_t)(s->h - 1 - cy) * s->w + cx) * 4;
+}
+
+/* one character per texel of the frame, sampled at the texel's centre (rotated draws included):
+ * @on where the two read-backs differ, '.' where they do not, '?' outside the picture */
+static void dbg_mask(const char *label, const dbgimg_t *a, const dbgimg_t *b, char on) {
+    float c = cosf(dbg_ang * 0.017453293f) * rscale, s = sinf(dbg_ang * 0.017453293f) * rscale;
+    char line[80];
+    int marked = 0, clear = 0, off = 0;
+    for (int j = 0; j < dbg_vh && j < 64; j++) {
+        int k = 0;
+        for (int i = 0; i < dbg_uw && k < 64; i++, k++) {
+            int ti = dbg_flip ? (dbg_uw - 1 - i) : i;
+            float lx = (float)ti + 0.5f - dbg_hx, ly = (float)j + 0.5f - dbg_hy;
+            int x = (int)(dbg_px + lx * rxscale * c + ly * s);
+            int y = (int)(dbg_py - lx * rxscale * s + ly * c);
+            const uint8_t *pa = dbg_at(a, x, y), *pb = dbg_at(b, x, y);
+            int diff = pa && pb && (pa[0] != pb[0] || pa[1] != pb[1] || pa[2] != pb[2]);
+            line[k] = !pa || !pb ? '?' : diff ? on : '.';
+            if (!pa || !pb) off++; else if (diff) marked++; else clear++;
+        }
+        line[k] = 0;
+        plat_log("sprite dump: %-6s |%s|\n", label, line);
+    }
+    plat_log("sprite dump: %-6s %d texels marked '%c', %d unchanged, %d outside the picture\n",
+             label, marked, on, clear, off);
+}
+
+/* does this quad land on her box? (the watch only runs for the dumped frames) */
+static int dbg_overlap(float x, float y, float w, float h) {
+    return x < dbg_bx1 && y < dbg_by1 && x + w > dbg_bx0 && y + h > dbg_by0;
+}
+
+/* a sprite drawn while the dump is watching: name it when it lands on her box */
+static void dbg_over(const char *what, const tex_t *t, int u, int v, int uw, int vh,
+                     float x, float y, float w, float h) {
+    if (!dbg_watch || dbg_over_logged >= 12 || !dbg_overlap(x, y, w, h)) return;
+    dbg_over_logged++;
+    plat_log("sprite dump: %s after her: atlas %d (%dx%d) rect (%d,%d %dx%d) at (%.0f,%.0f) %.0fx%.0f additive %d invert %d\n",
+             what, t ? t->id : -1, t ? t->w : 0, t ? t->h : 0, u, v, uw, vh,
+             (double)x, (double)y, (double)w, (double)h, add_on, invert_on);
+}
+
+/* the atlas' own mask, so the three screen masks can be read against what the sheet holds */
+static void dbg_atlas_mask(void) {
+    if (!dbg_g || !dbg_g->ix) return;
+    char line[80];
+    for (int j = 0; j < dbg_vh && j < 64; j++) {
+        int k = 0;
+        for (int i = 0; i < dbg_uw && k < 64; i++, k++) {
+            int ix = dbg_g->ix[(size_t)(dbg_v + j) * dbg_g->w + dbg_u + i];
+            line[k] = !ix ? '.' : (pals[dbg_g->palrow & 3][ix] & 0x8000) ? '#' : '-';
+        }
+        line[k] = 0;
+        plat_log("sprite dump: atlas  |%s|\n", line);
+    }
+}
+
+/* called by player_draw() right before the frame's quad */
+void r_dump_begin(const tex_t *t, int u, int v, int uw, int vh, float px, float py, float hx, float hy,
+                  float angle, int flip, const char *anim, int frame) {
+    if (dbg_active || dbg_dumps_left <= 0) return;
+    if (!tex_live(t) || uw <= 0 || vh <= 0) return;
+    {   /* one dump per pose: "she is cut" happens in a particular frame of a particular animation, so the
+         * log has to carry every pose the level shows, once */
+        uint32_t key = 2166136261u ^ (uint32_t)frame ^ ((uint32_t)((anim ? anim[0] : '?') << 8) * 16777619u);
+        key = (key ^ (uint32_t)(u | (v << 8) | (uw << 16) | (vh << 24))) * 16777619u;
+        key ^= (uint32_t)(flip * 31) + (uint32_t)(int)(angle * 4) * 131u;
+        for (int i = 0; i < dbg_nseen; i++) if (dbg_seen[i] == key) return;
+        if (dbg_nseen < DBG_DUMPS) dbg_seen[dbg_nseen++] = key;
+    }
+    flush();                                    /* everything drawn before her has to be in the target */
+    dbg_g = &texs[t->id]; dbg_u = u; dbg_v = v; dbg_uw = uw; dbg_vh = vh; dbg_flip = flip;
+    dbg_px = px; dbg_py = py; dbg_hx = hx; dbg_hy = hy; dbg_ang = angle;
+    snprintf(dbg_anim, sizeof dbg_anim, "%s", anim ? anim : "?");
+    dbg_box();
+    if (!dbg_grab(&dbg_before)) { plat_log("sprite dump: the target could not be read back\n"); dbg_dumps_left = 0; return; }
+    dbg_over_logged = 0;
+    dbg_active = 1;
+    plat_log("sprite dump: anim \"%s\" frame %d, rect (%d,%d %dx%d) of %dx%d, at (%.0f,%.0f), hotspot (%.0f,%.0f), rot %.1f, flip %d, box (%d,%d %dx%d)\n",
+             dbg_anim, frame, u, v, uw, vh, dbg_g->w, dbg_g->h, (double)px, (double)py, (double)hx, (double)hy,
+             (double)angle, flip, dbg_before.x0, dbg_before.y0, dbg_before.w, dbg_before.h);
+}
+
+/* called by player_draw() right after the frame's quads */
+void r_dump_drawn(void) {
+    if (!dbg_active) return;
+    flush();
+    if (!dbg_grab(&dbg_after)) { dbg_active = 0; return; }
+    dbg_atlas_mask();                             /* what the sheet holds */
+    dbg_mask("drawn", &dbg_before, &dbg_after, '#');
+    dbg_watch = 1;                                /* name anything drawn over her from here on */
+}
+
+/* called by r_end(): what the frame looks like once everything else was drawn on top of her */
+void r_dump_frame_end(void) {
+    if (!dbg_active) return;
+    dbg_watch = 0;
+    dbg_active = 0;
+    if (dbg_grab(&dbg_end_img)) dbg_mask("over", &dbg_after, &dbg_end_img, '+');
+    dbg_release(&dbg_before); dbg_release(&dbg_after); dbg_release(&dbg_end_img);
+    if (--dbg_dumps_left <= 0) plat_log("sprite dump: that was the last one of this level\n");
+}
+
 void r_rect(float x, float y, float w, float h, uint32_t argb) {
     if (x + w < 0 || y + h < 0 || x >= SCREEN_W || y >= SCREEN_H) return;
     if ((argb >> 24) == 0) return;
+    if (dbg_watch && dbg_over_logged < 12 && dbg_overlap(x, y, w, h)) {
+        dbg_over_logged++;
+        plat_log("sprite dump: rect after her: (%.0f,%.0f) %.0fx%.0f argb %08x additive %d\n",
+                 (double)x, (double)y, (double)w, (double)h, (unsigned)argb, add_on);
+    }
     if (cur_tex || cur_indexed != 2) { flush(); cur_tex = 0; cur_indexed = 2; }   /* solid: no texture */
     set_blend(add_on ? 1 : 0);
     push_quad(x, y, x + w, y + h, 0, 0, 0, 0, argb, invert_on);

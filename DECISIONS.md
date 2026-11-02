@@ -538,3 +538,24 @@ indices of every paletted atlas (`gtex_t.ix`, freed with the slot -- a level's a
 ranges of rows/columns that draw nothing and the palette row's opaque count. The first four draws of a level read their frames
 out that way. `tools/android/check_texlife.c` pins both: an overrunning frame keeps its size and samples past 1.0, and a sheet
 built out of the three kinds of texel is counted and mapped as expected.
+
+## D-124 (Android): a quad's two triangles must wind alike -- and the log now carries what the picture got, not only what the atlas holds
+D-123 fixed a real difference between the backends (the GLES quad was cut to the atlas, the PVR never cuts) and the report came
+back unchanged, with a log in which the atlas, the palette and the frame rect were all provably right: `0 have an index but are
+invisible in that palette`, the silhouette a full character, the rect the Dreamcast's own. So the fault was on the screen side of
+the draw, and the code had one asymmetry worth the name: `push_quad()` hands the batch's shared index buffer (0,1,2 + 0,2,3, i.e.
+TL,TR,BR + TL,BR,BL) the corners in that order, while `r_sprite_rot()` handed it TL,TR,BL,BR. Both orders cover the quad, but the
+second makes the two triangles wind in OPPOSITE directions, so `GL_CULL_FACE` -- one line of state away, in a context shared with
+the launcher UI -- drops one of them and the sprite loses a clean half along the quad's diagonal, with the background showing
+through the straight edge. Only the rotated path could do it, which is why just the sprites drawn with a tilt (the heroine's lean,
+most enemies) were cut and the upright ones were fine, and why the Dreamcast, which sends four corners per primitive and has no
+index buffer at all, was whole. `r_sprite_rot()` now writes TL,TR,BR,BL with the texture coordinates on the same corners, and
+`r_begin()` disables culling every frame instead of trusting that nothing else turned it on.
+The report still needs an answer rather than a theory, so the backend now also says what the PICTURE got. The first eight distinct
+poses of a level are read back off the target three times around her quads -- before them, right after them, at the end of the
+frame -- and the three masks are printed next to the atlas', one character per texel of the same rect: `drawn` = the picture
+changed there, `over` = it changed again after her quads, and every sprite or rect that lands on her box in that window is named
+(`sprite dump: sprite after her: atlas 3 ... rect ... at ...`). That separates the three cases a "she is cut off" report can mean:
+the sheet is empty, her own quad put no pixel there, or something is drawn over her. `tools/android/check_texlife.c` pins both the
+winding (a rotated quad's two triangles must agree, mirrored and scaled too) and the dump (against a synthetic read-back: half a
+sprite drawn shows up as `####....`, and a repaint after her shows up as `+`).
