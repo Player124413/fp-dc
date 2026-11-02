@@ -700,3 +700,28 @@ Two guards, so this class cannot come back:
   original shows (the scene would be invisible) -- that lone write is emitted as `f 32`, a fade in, instead of `fa 255`.
 - `make -C tools/android story` (part of `check`; `check_story_scripts.py`) walks every script the way `csx_load` does and
   fails when an opaque cover has no command that lowers it: `72 scenes open with a visible picture`.
+
+## D-134 (audit): every story script re-checked against the data it needs - one open item, the sprite rows
+After D-133 the question "do the other scenes work" was answered by walking all 72 scripts against the tables they
+read, not by guesswork:
+- `room st<N>` -> `tables/frames/frame_<N>.json` exists (the split rooms st83xx / st8234 are `json * 100 + CutsceneList`,
+  ADVENTURE.md 10, so their numbers resolve to the base frame);
+- every `dialog <n>` is in `tables/story/dialog.json`, every `actor` class_handle is in `rows.json`, every
+  `step` (`scene:` / `stage:`) names something the table has;
+- every `i <actor> <anim> <dir> <frame>` line resolves to a row of its room (3171 distinct combinations, 0 missing);
+- the op set is cutscene.c's `csx_load`'s, the actor count stays under `CSX_ACTORS` (max 235 of 256), a scene's sound ids
+  under the 48 the story code passes on (max 19), its pooled strings under `CSX_POOL` (max 157 of 1024) and its dialog
+  under the loaded lines (max 275);
+- the cover: no scene spends more than 18% of its frames at full black, and those are the intended fades (adv_opening's
+  opening, rm_collapse's ending). rm5_spade / rm5_spade_c are the two D-133 fixed ones.
+**The open item** is the one thing the data cannot give: 231 of the 3172 rows in `tables/story/rows.json` have no entry in
+`tables/frames/anims.json` (a one-time RE dump), so `tools/import_frame.py story_rows` skips them and the sprite is not drawn
+while that row is active (`cutscene.c`: `row < 0` is skipped). Almost all are cutscene-only effect art (sparkle 1-5,
+effectsdust01, effectsexplosion02/06, the holo dragon's parts: the dust and sparks of a scene are simply absent). Three
+scenes also ask for a heroine/placeholder pose: `dv_crash` and `dv_meet` (`placeholdercharacter_3908` anim 40 - the
+placeholder class the original fills with the active character's own art; see objdefs.c's OT_MT_SPADE note) and
+`dv_crash` / `tb_torture` (`playerskincarol_449` anim 4, `playerskincaroltail_448` anim 4). Which of those is visible on
+screen, and what the original shows there, needs the reference (a video or a screenshot of the scene): then the row is
+added to rows.json as the class/anim the original used - no rule is invented in the player.
+`make -C tools/android story` now prints both: the cover verdict (fatal) and the row count (`--rows` lists every missing
+one), so this cannot drift unnoticed.

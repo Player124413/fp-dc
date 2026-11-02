@@ -9,14 +9,22 @@ This follows cutscene.c's `csx_load` over every script and fails when the cover 
 later command that lowers it - a scene that can never show its picture. A scene that fades OUT to black at its
 end is fine: nothing lowers the cover there either, but the cover was not opaque at the scene's first frame.
 
-The parse is a checker's, not the player: only the cover state and the op set are modelled.
+Second pass, informational: the sprite rows the scripts ask for but the committed animation table cannot build
+(tools/import_frame.py story_rows skips them with "story: missing ..."), so the actor is not drawn while such a
+row is active (cutscene.c: `row < 0` is skipped). These are a one-time RE dump's holes in cutscene-only effect
+classes, not a regression: reported, never fatal -- `--rows` lists them.
+
+The parse is a checker's, not the player: only the cover state, the op set and a row lookup are modelled.
 """
 import glob
+import json
 import os
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 SCRIPTS = os.path.join(ROOT, 'tables', 'story', 'scripts')
+ROWS = os.path.join(ROOT, 'tables', 'story', 'rows.json')
+ANIMS = os.path.join(ROOT, 'tables', 'frames', 'anims.json')
 # cutscene.c's csx_load: the ops it knows (a numbered line with any other name is dropped there)
 OPS = {'p', 'm', 'l', 'i', 'v', 'a', 'fa', 'fw', 'c', 'say', 'close', 's', 'f', 'chsel', 'capx', 'subx', 'mv', 'u', 'o',
        'rga', 'rgd', 'rgp', 'rgj', 'sub', 'pv', 'cap', 'rigpart', 'seg', 'end'}
@@ -47,6 +55,43 @@ def walk(path):
     return cover, first, None
 
 
+def buildable(anims, key, anim, d):
+    """import_frame.py story_rows: an[cls]['anims'][anim][dir]'s frames (a direction 16+ row may ride the mirror alias of
+    its direction-0+ base). The alias also needs the pixels to match, which is not checked here: permissive."""
+    a = anims.get(key) or {}
+    al = a.get('anims') or []
+    for d_ in (d, d - 16 if d >= 16 else None):
+        if d_ is None or anim >= len(al) or not isinstance(al[anim], dict):
+            continue
+        e = al[anim].get(str(d_))
+        if isinstance(e, dict) and e.get('frames'):
+            return True
+    return False
+
+
+def rows_audit(verbose):
+    if not (os.path.isfile(ROWS) and os.path.isfile(ANIMS)):
+        return
+    rows = json.load(open(ROWS, encoding='utf-8'))
+    anims = json.load(open(ANIMS, encoding='utf-8'))
+    total = miss = 0
+    per = []
+    for name in sorted(rows):
+        bad = [(k, a, d) for k, a, d in rows[name].get('rows', []) if not buildable(anims, k, a, d)]
+        total += len(rows[name].get('rows', []))
+        miss += len(bad)
+        if bad:
+            per.append((name, bad))
+    print('  story rows: %d of %d rows build (the animation table has no entry for the rest: those sprites are not drawn)'
+          % (total - miss, total))
+    for name, bad in per:
+        if verbose:
+            for k, a, d in bad:
+                print('    %s: %s anim %d dir %d' % (name, k, a, d))
+        else:
+            print('    %-22s %d row(s)' % (name, len(bad)))
+
+
 def main():
     bad, note, n = [], [], 0
     for path in sorted(glob.glob(os.path.join(SCRIPTS, '*.scn'))):
@@ -72,6 +117,7 @@ def main():
             print('  FAILED %s' % b)
         return 1
     print('  story scripts: %d scenes open with a visible picture (an opaque cover always has a lift)' % n)
+    rows_audit('--rows' in sys.argv)
     return 0
 
 
