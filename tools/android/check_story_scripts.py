@@ -9,6 +9,10 @@ This follows cutscene.c's `csx_load` over every script and fails when the cover 
 later command that lowers it - a scene that can never show its picture. A scene that fades OUT to black at its
 end is fine: nothing lowers the cover there either, but the cover was not opaque at the scene's first frame.
 
+The black wipe (`fw <x>` on, `fw -1000` off, game_wipe_draw) is the second way to hide a whole scene that way
+(D-137). It is reported as a note, not a failure: a wipe still on at the very last entry of a scene is a
+legitimate "wipe out and end", while one left on in the middle of a scene is the D-133 bug again.
+
 Second pass, informational: the sprite rows the scripts ask for but the committed animation table cannot build
 (tools/import_frame.py story_rows skips them with "story: missing ..."), so the actor is not drawn while such a
 row is active (cutscene.c: `row < 0` is skipped). These are a one-time RE dump's holes in cutscene-only effect
@@ -31,8 +35,9 @@ OPS = {'p', 'm', 'l', 'i', 'v', 'a', 'fa', 'fw', 'c', 'say', 'close', 's', 'f', 
 
 
 def walk(path):
-    """([(seg, t, kind, v) for the cover in play order], the cover at the scene's first frame, error text)"""
-    cover, first, seg = [], None, -1
+    """([(seg, t, kind, v) for the cover in play order], the cover at the scene's first frame, the last wipe write,
+    error text)"""
+    cover, first, seg, wipe = [], None, -1, None
     for ln in open(path, encoding='utf-8', errors='replace'):
         ln = ln.strip()
         if not ln or ln.startswith('#'):
@@ -43,16 +48,18 @@ def walk(path):
                 seg += 1
             continue
         if t[0][0] == '-':                              # csx_load rejects a negative frame
-            return ops, cover, first, 'negative frame %r' % t[0]
+            return cover, first, wipe, 'negative frame %r' % t[0]
         op = t[1] if len(t) > 1 else ''
         if op not in OPS:
-            return cover, first, 'unknown op %r in %r' % (op, ln)
+            return cover, first, wipe, 'unknown op %r in %r' % (op, ln)
+        if op == 'fw':                                  # the black wipe: `fw <x>` on (x > -999), `fw -1000` off
+            wipe = (max(seg, 0), int(t[0]), int(t[2]) if len(t) > 2 else 0)
         if op in ('fa', 'f'):
             v = int(t[2]) if len(t) > 2 else 0
             cover.append((max(seg, 0), int(t[0]), 'set' if op == 'fa' else 'ramp', v))
             if first is None:
                 first = min(255, max(0, v)) if op == 'fa' else (255 if v > 0 else 0)
-    return cover, first, None
+    return cover, first, wipe, None
 
 
 def buildable(anims, key, anim, d):
@@ -97,10 +104,13 @@ def main():
     for path in sorted(glob.glob(os.path.join(SCRIPTS, '*.scn'))):
         n += 1
         name = os.path.basename(path)
-        cover, first, err = walk(path)
+        cover, first, wipe, err = walk(path)
         if err:
             bad.append('%s: %s' % (name, err))
             continue
+        if wipe and wipe[2] > -999:                      # the wipe covers the whole screen from its left edge on
+            note.append('%s: the black wipe is still on at segment %d frame %d (the screen is covered from there)'
+                        % (name, wipe[0], wipe[1]))
         if not cover or first is None or first < 250:
             continue                                     # opens with a visible picture
         lift = next(((sg, t) for sg, t, kind, v in cover

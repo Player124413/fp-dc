@@ -757,3 +757,19 @@ Three changes, all in the port's own layer (the game code and `cutscene.c` are u
   is wrong", which is exactly the difference that cost this round.
 `make -C tools/android check` gained nothing to run: the asset path is a platform-layer read, and the missing header for the
 host syntax pass is a stub (`tools/android/ndkstub/android/asset_manager.h`).
+
+## D-137 (audit): the two ways a whole scene can be hidden, checked over all 72 scripts
+The cover is only one way to hide a cutscene. The other is the black wipe (`fw <x>`: `game_wipe_draw` paints from the
+screen's left edge to `x`, and only `fw -1000` clears it), so `tools/android/check_story_scripts.py` now reads the wipe
+writes too and notes a scene whose last wipe is still on (all four scenes that use it - `rm_hideout`, `sm_spade`, and its
+`_c` / `_m` variants - clear it, so nothing is reported today; a scene left mid-wipe would be the D-133 bug again).
+The picture behind a lifted cover was checked too, offline, from the data the rooms are built from: for every scene the
+camera (`c`) and the actors (`p` / `v`) were replayed frame by frame over its first segment and the view was tested against
+the room's placed objects (`tables/frames/frame_<room>.json`). 64 of 72 scenes have something placed in the view at every
+frame. The eight that are not always covered are the parallax shots, where the picture is a scrolling backdrop rather than
+placed objects - the opening's fade (`adv_opening`, 20 % of its frames, the D-134 cover number), the sky and river scenes
+(`zao_airship2*`, `jiang_river`), and `dv_meet` (7 %, its planes are actors that fly in) - plus one single frame of
+`rm_hideout` (the camera drops from the ceiling to the actors at frame 1) and `dv_crash2` (1 frame). No scene is empty for
+a visible stretch.
+What cannot be asserted offline is the *pixels*: that needs the converted art. That is what the device log is for, and it
+now names the script (`story <id>: script <bytes> bytes crc <crc32>, first cover '<op>'`, D-136).
