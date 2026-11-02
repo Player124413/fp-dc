@@ -84,6 +84,19 @@ def main():
         n = write_table(out, sc); n += write_table(out, sc, 'inline')
         for s in ported(sc):
             shutil.copyfile(os.path.join(TABLES, 'scripts', s['id'] + '.scn'), os.path.join(out, 'story', s['id'] + '.scn'))
+        # D-136: the scripts travel inside the data pack, so a script fix only reaches a device with a re-imported pack.
+        # stamp.txt names the tree the pack was built from (commit, scene count, a hash of every script); src/game/story.c
+        # logs it and each scene's own crc, which is what tells "old pack" from "new bug".
+        import hashlib
+        h = hashlib.sha1()
+        for s in sorted(ported(sc), key=lambda s: s['id']):
+            h.update(open(os.path.join(TABLES, 'scripts', s['id'] + '.scn'), 'rb').read())
+        try:
+            com = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT, capture_output=True, text=True).stdout.strip() or '?'
+        except OSError:
+            com = '?'
+        with open(os.path.join(out, 'story', 'stamp.txt'), 'w', encoding='utf-8', newline='\n') as f:
+            f.write('build %s, %d scenes, scripts %s\n' % (com, len(ported(sc)), h.hexdigest()[:12]))
         D = json.load(open(os.path.join(TABLES, 'dialog.json'), encoding='utf-8'))['dialog']
         for h in dialog_handles(sc):
             with open(os.path.join(out, 'story', 'dlg_%s.txt' % h), 'w', encoding='latin-1', newline='\n') as f:

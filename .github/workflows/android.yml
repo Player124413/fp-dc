@@ -135,6 +135,12 @@ jobs:
               fi
             fi
             unzip -l "$apk" | grep -q 'classes.dex' || { echo "::error::no classes.dex in $apk"; fail=1; }
+            # D-136: the Adventure scene scripts ship in the APK's assets (and win over the data pack), so their absence
+            # is a broken build, not a cosmetic one: without them a device falls back to whatever script its pack has.
+            nscn=$(unzip -l "$apk" | grep -c 'assets/story/.*\.scn$' || true)
+            echo "  scene scripts in assets: $nscn"
+            unzip -l "$apk" | grep -q 'assets/story/rm5_spade.scn' || { echo "::error::the scene scripts are missing from $apk (gradle storyAssets)"; fail=1; }
+            [ "${nscn:-0}" -ge 60 ] || { echo "::error::only ${nscn:-0} scene scripts in $apk: the assets copy is incomplete"; fail=1; }
             # an update installs over the previous version only when the signature matches, so every
             # build must carry the same certificate -- the one in android/keystore
             if ! out=$("$BT/apksigner" verify --print-certs "$apk" 2>&1); then

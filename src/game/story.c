@@ -38,6 +38,12 @@ static void parse_step(const char *s, step_t *st) {
 static void table_load(void) {
     if (nsc >= 0) return;
     nsc = 0;
+    {   /* D-136: which build's story data the pack carries (story/stamp.txt, written by tools/import_story.py). A pack
+         * imported before a script fix keeps the old script, so a stale pack has to be visible in the log. */
+        size_t zs = 0; char *st = plat_load_file("story/stamp.txt", &zs), b[64] = "";
+        if (st) { size_t k = 0; while (k < zs && k < sizeof b - 1 && st[k] != '\n' && st[k] != '\r') { b[k] = st[k]; k++; } b[k] = 0; free(st); }
+        plat_log("story data: %s\n", b[0] ? b : "no stamp (a pack built before this check) - re-import fpdc-data.zip to be sure the scripts are current");
+    }
     { size_t cz; captions = plat_load_file("story/captions.txt", &cz);
       if (captions) { char *z = realloc(captions, cz + 1); if (z) { captions = z; captions[cz] = 0; } else { free(captions); captions = NULL; } } }
     size_t sz, sz2; char *d = plat_load_file("story/story.txt", &sz), *d2 = d ? plat_load_file("story/inline.txt", &sz2) : NULL;
@@ -385,10 +391,48 @@ static void pause_update(const input_t *in) {
  * room's bank row count says whether the actors could have found their rows at all.  Four frames are enough for
  * objects_draw(0) to have run once (game_draw). */
 extern int obj_drawn_pass0;                          /* objects.c: what the json layer 0-1 pass drew last frame */
+
+/* D-136: the scene scripts travel inside the *data pack* (tools/import_story.py copies tables/story/scripts into it), so a
+ * script fix only reaches a phone when the pack is imported again -- the APK alone cannot carry it. A pack made before a
+ * fix keeps playing the old script, and "the scene is still black" is then a data question, not a code one. This line
+ * answers it from one log: the script's size and crc (compare with the tree's file) and the first cover op it opens with
+ * (`fa 255` = an opaque cover nobody lifts, D-133; `f 32` = the fade-in this build's script has). */
+#ifndef FP_HOST_ENV
+static void script_stamp(const char *name) {
+    char nm[48]; snprintf(nm, sizeof nm, "story/%.23s.scn", name);
+    size_t n = 0; const unsigned char *d = plat_load_file(nm, &n);
+    if (!d) { plat_log("story %s: no script in the data (%s)\n", name, nm); return; }
+    uint32_t c = 0xffffffffu;
+    for (size_t i = 0; i < n; i++) { c ^= d[i]; for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xedb88320u & (0u - (c & 1u))); }
+    char op[16] = "-";
+    for (size_t i = 0; i + 8 < n; ) {                    /* the first 'f' / 'fa' / 'fw' row of segment 0: "<t> <op> [args]" */
+        size_t j = i; while (j < n && d[j] != '\n') j++;
+        const unsigned char *l = d + i; size_t len = j - i;
+        if (len && l[0] != '#') {
+            size_t k = 0; while (k < len && l[k] != ' ') k++;      /* t */
+            size_t s = k + 1, e = s; while (e < len && l[e] != ' ' && l[e] != '\r') e++;
+            if (e > s && l[s] == 'f' && e - s <= 2) {              /* f, fa, fw */
+                size_t o = 0; for (size_t q = s; q < e && q < len && o < sizeof op - 1; q++) op[o++] = (char)l[q];
+                while (e < len && l[e] == ' ') e++;
+                size_t a = e; while (e < len && l[e] != ' ' && l[e] != '\r') e++;
+                if (e > a && op[1] != 'w' && o < sizeof op - 1) { op[o++] = ' '; for (size_t q = a; q < e && o < sizeof op - 1; q++) op[o++] = (char)l[q]; }
+                op[o] = 0;
+                break;
+            }
+        }
+        i = j + 1;
+    }
+    plat_log("story %s: script %u bytes crc %08x, first cover '%s'\n", name, (unsigned)n, c ^ 0xffffffffu, op);
+    free((void *)d);
+}
+#endif
 static void scene_log(int id) {
     if (id < 0 || id >= nsc) return;
     plat_log("story %s: scene room st%d, level %s, g4 %d, camera %d,%d, %d objects on json layers 0-1, %d pieces, the bank has %d rows",
              SC[id].name, SC[id].room, G.lvdir, SC[id].g4, (int)G.camx, (int)G.camy, obj_drawn_pass0, G.lvl.npieces, G.ens.nanims);
+#ifndef FP_HOST_ENV
+    script_stamp(SC[id].name);
+#endif
 }
 void story_update(const input_t *in) {
     G.frame++; G.frame_draw_t++;

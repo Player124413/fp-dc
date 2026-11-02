@@ -253,7 +253,13 @@ The authoritative format is the header comment of `src/game/story.h`. In short:
   whose only cover write is `fa 255` can never show anything and plays as a black screen (D-133, `make -C tools/android
   story` fails on that).
 - `story/dlg_<handle>.txt` holds the paragraphs. `story/captions.txt` holds the caption strings. `st<json>/` is the
-  room.
+  room. `story/stamp.txt` names the tree the pack was built from (commit, scene count, a hash of every script).
+- **Which copy of a script plays (D-136):** the Android APK carries `tables/story/scripts/*.scn` in its assets and the
+  platform layer reads `story/<id>.scn` from there *before* the data pack, so a script fix ships with the build like a
+  source change -- it does not wait for the data to be imported again. The pack's own copy is the fallback (Dreamcast disc,
+  host). The log says both: `story data: build <commit>, 72 scenes, scripts <hash>` once at startup, and
+  `story <id>: script <bytes> bytes crc <crc32>, first cover '<op>'` for every scene, so an old script on a device is
+  visible instead of being mistaken for a drawing bug.
 
 **To add a scene** (phase 2):
 

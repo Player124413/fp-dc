@@ -735,3 +735,25 @@ M rows`, so a log answers three questions at once: which stage answered the pict
 that stage has any pieces there at all (0 pieces + 0 objects = nothing behind the actors; pieces > 0 = an overlay would be
 the suspect, not the level).
 No drawing rule changed: this is the same diagnostic only, `cutscene.c` untouched (still `cb30968`).
+
+## D-136 (Android): a scene script ships with the build, and the log says which one played
+The RM5 scene stayed a black screen over three builds, and the reason was not the drawing code: `rm5_spade.scn` opens with
+a cover op, and D-133 changed that op from a static `fa 255` (an opaque black nobody ever lifts) to `f 32` (a fade-in).
+That fix lives in `tables/story/scripts/`, which `tools/import_story.py` **copies into the data pack** - so the phone kept
+playing the script it had imported months earlier while every new APK changed only code. Nothing in the app could show the
+two were out of step, and the log looked healthy: the scene started, the bank had rows, the sound played.
+
+Three changes, all in the port's own layer (the game code and `cutscene.c` are untouched, still `cb30968`):
+- **The scripts now travel in the APK.** `android/app/build.gradle` copies `tables/story/scripts/*.scn` into the APK's
+  `assets/story/` (task `storyAssets`, ~1.5 MB deflated), and `plat_android.c`'s `plat_load_file` reads `story/<id>.scn`
+  from the assets before the pack. A script is the port's own data, like a source file, so a script fix now arrives with the
+  APK and never waits for a data import. The pack still carries the rooms, art, audio - and its copy of the scripts is now
+  simply the fallback for a build that has no asset copy (the Dreamcast disc, the host).
+- **`story/stamp.txt`** (written by the importer: build commit, scene count, a hash of every script) is logged once at
+  startup as `story data: build <commit>, 72 scenes, scripts <hash>`; a pack built before this line says so instead.
+- **Each scene logs its own script**: `story rm5_spade: script 16845 bytes crc f03a3991, first cover 'f 32'`. The crc is the
+  file's; the cover op is the first `f` / `fa` / `fw` row of segment 0. `fa 255` there means "an opaque cover nobody lifts"
+  (D-133's bug), `f 32` means the fade-in. One line now separates "the device plays an old script" from "the picture itself
+  is wrong", which is exactly the difference that cost this round.
+`make -C tools/android check` gained nothing to run: the asset path is a platform-layer read, and the missing header for the
+host syntax pass is a stub (`tools/android/ndkstub/android/asset_manager.h`).

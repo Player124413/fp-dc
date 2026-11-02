@@ -7,6 +7,18 @@ plugins {
 // reads it as a method call.)
 def fpVersionCode = ((project.findProperty('fpVersionCode') ?: System.getenv('GITHUB_RUN_NUMBER') ?: '1')).toString().toInteger()
 
+// D-136: tables/story/scripts/*.scn -> assets/story/*.scn. 10 MB of text, ~1.5 MB in the APK once deflated; the asset
+// copy is what the game loads, so a scene-script fix never waits for a new data pack again.
+def storyAssets = tasks.register('storyAssets', Copy) {
+    from("${rootProject.projectDir}/../tables/story/scripts") { include '*.scn' }
+    into layout.buildDirectory.dir('storyAssets/story')
+}
+// Whatever consumes the assets (the merge tasks) and whatever runs first (preBuild) needs the copy in place.
+tasks.configureEach { t ->
+    if (t.name == 'preBuild' || (t.name.startsWith('merge') && t.name.endsWith('Assets')))
+        t.dependsOn storyAssets
+}
+
 android {
     namespace 'com.fpdc.port'
     compileSdk 34
@@ -78,6 +90,13 @@ android {
         }
     }
 
+    // D-136: the Adventure scene scripts are the build's own data (tables/story/scripts/*.scn), not the user's: the
+    // pack carries them too, but a pack imported before a script fix kept playing the old script, and a scene stayed
+    // black over several APKs because the fix lived in the pack. They are copied into the APK's assets/story/ by the
+    // storyAssets task below and plat_android.c reads them from there first. Everything else still comes from the
+    // imported data (see FpActivity).
+    sourceSets.main.assets.srcDir(layout.buildDirectory.dir('storyAssets'))
+
     // the game data is imported at run time (see FpActivity), so nothing large ships in the APK
     buildFeatures {
         buildConfig false
@@ -86,3 +105,4 @@ android {
         abortOnError false
     }
 }
+

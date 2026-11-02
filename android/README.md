@@ -101,6 +101,12 @@ manager, `adb push`) works too — the only thing the importer adds is the `.fpd
 The port reads the same files the disc has (PAL8/PAL4/ARGB1555 atlases, AICA ADPCM sound effects, ADPCM
 music), so the package is the Dreamcast `converted/` tree, unpacked.
 
+The one exception is the Adventure scene scripts (`tables/story/scripts/*.scn`): the build copies them into
+the APK's `assets/story/` and the game reads them from there before the pack, so a script correction arrives
+with the APK instead of a fresh data import (D-136). The pack still carries them for the disc and the host.
+The log names both copies — `story data: build <commit>, ...` at startup and `story <scene>: script <bytes>
+bytes crc <crc>, first cover '<op>'` per scene — which is how a stale pack is told apart from a real bug.
+
 ## Controls
 
 - **Touch pad**: floating analogue stick (it appears where the thumb lands), JUMP / ATTACK / SPECIAL /

@@ -27,6 +27,7 @@
 #include <sys/system_properties.h>
 #include <sys/stat.h>
 #include <android_native_app_glue.h>
+#include <android/asset_manager.h>
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include "ui.h"          /* ui_gles_init()/ui_release() of the shell renderer */
@@ -523,9 +524,34 @@ void *plat_read_raw(const char *name, size_t *size) {
     return d;
 }
 
+/* D-136: the Adventure scene scripts are the *build's* data, not the user's: tools/import_story.py copies them into the
+ * data pack too, so a pack imported before a script fix kept playing the old script (a scene stayed black over several
+ * APKs because the fix was in the pack, not in the app). The APK now carries tables/story/scripts/*.scn in its assets
+ * (gradle's storyAssets task) and that copy wins for story/<id>.scn: a script fix arrives with the APK, while the pack
+ * keeps the rooms, art and audio. Anything else still comes from the pack, then from the data folder. */
+static AAssetManager *amgr;
+
+static void *asset_read(const char *name, size_t *size) {
+    if (!amgr) return NULL;
+    AAsset *a = AAssetManager_open(amgr, name, AASSET_MODE_UNKNOWN);
+    if (!a) return NULL;
+    off_t n = AAsset_getLength(a);
+    if (n <= 0 || n > 64L * 1024 * 1024) { AAsset_close(a); return NULL; }
+    void *d = malloc((size_t)n);
+    if (!d) { AAsset_close(a); return NULL; }
+    off_t got = 0;
+    while (got < n) { int k = AAsset_read(a, (char *)d + got, (size_t)(n - got)); if (k <= 0) break; got += k; }
+    AAsset_close(a);
+    if (got != n) { free(d); return NULL; }
+    *size = (size_t)n;
+    return d;
+}
+
 void *plat_load_file(const char *name, size_t *size) {
+    void *d;
+    if (!strncmp(name, "story/", 6) && strstr(name, ".scn") && (d = asset_read(name, size)) != NULL) return d;
     int found;
-    void *d = pack_load(name, size, &found);
+    d = pack_load(name, size, &found);
     if (d || found) return d;
     return plat_read_raw(name, size);
 }
@@ -1118,6 +1144,7 @@ static void on_cmd(struct android_app *app, int32_t cmd) {
 void android_main(struct android_app *app) {
     plat_log("main: enter");
     APP = app;
+    amgr = app->activity->assetManager;   /* D-136: the build's own scene scripts live in the APK's assets */
     app->onAppCmd = on_cmd;
     app->onInputEvent = on_input;
     app->userData = NULL;
