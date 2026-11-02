@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include "cutscene.h"
+#include "story_draw.h"
 
 #define BOX_X 16
 #define BOX_Y 8
@@ -139,7 +140,7 @@ static struct {
     csx_ent_t *e; int seg_first[CSX_SEGS + 1];
     char name[24], pool[CSX_POOL]; int pool_n;
     short sfx[48];
-    struct { int handle, layer, x, y, vis, row, mdx, mdy, mn, locked, add, alpha; int16_t lx0, ly0, lx1, ly1, lt, ln;
+    struct { int handle, layer, x, y, vis, row, mdx, mdy, mn, locked, add, alpha, skin, said; int16_t lx0, ly0, lx1, ly1, lt, ln;
              int16_t rk, rb, rc, ra; float ang; uint8_t flip; int mvo, mvl; animator_t an; } a[CSX_ACTORS];
     char *mv; int mv_n, mv_cap;                           /* session 26: the 'mv' paths (one character a frame) */
     struct { int on; double A, dA, D, dD, E, F, H, J, L; } rig;   /* session 26: the holo dragon rig (the neck's values, PL6 13342-13344) */
@@ -266,6 +267,9 @@ int csx_load(const char *path) {
                 if (k) sscanf(p + k, "%15s", ink);                /* ink: "add" (set_shader 0x20) or "a<alpha>" (blend colour) */
                 char *u = strrchr(cls, '_');
                 X.a[n].handle = u ? atoi(u + 1) : 0; X.a[n].layer = l; X.nact++;
+                /* a heroine standing in the room (playerskincarol_449 and friends): their flags are the ones the
+                 * recycled addresses spoil (see the draw rule below) */
+                X.a[n].skin = !strncmp(cls, "playerskin", 10) || !strncmp(cls, "player_", 7);
                 X.a[n].add = !strcmp(ink, "add"); X.a[n].alpha = ink[0] == 'a' && ink[1] >= '0' && ink[1] <= '9' ? atoi(ink + 1) : 255;
             } else if (!strcmp(op, "rigpart")) {               /* rigpart <actor> <kind> <B> <C> <a>: a part of the holo dragon rig */
                 int n = -1, k = 0, b = 0, c = 0, ra = 0;
@@ -289,6 +293,37 @@ static int row_of(int handle, int anim, int dir) {
     char nm[40];                                          /* the bank's names are 15 characters: s<4 digits>_<2>_<2> fits */
     snprintf(nm, sizeof nm, "s%d_%d_%d", handle & 0xffff, anim & 0xff, dir & 0xff);
     return X.ens && X.ens->nframes ? bank_anim(X.ens, nm) : -1;
+}
+/* A room's _ens bank holds the rows its scene scripts ask for, and a bank that ran out of room in its atlas (or a
+ * data package built by an older converter) can be without one of them: the character then had no row and simply did
+ * not show. Take the nearest pose of the same object instead - the same animation facing the other way, the first
+ * direction, or any row of that object at all - and say so in the log, so a report of a missing heroine tells us
+ * which row the room was short of. */
+static void row_near_log(int handle, int anim, int dir, int got) {
+    static struct { int h, a, d; } seen[16]; static int n;
+    for (int i = 0; i < n; i++) if (seen[i].h == handle && seen[i].a == anim && seen[i].d == dir) return;
+    if (n < 16) { seen[n].h = handle; seen[n].a = anim; seen[n].d = dir; n++; }
+    plat_log("story %s: row s%d_%d_%d is not in the room's bank, using %s\n", X.name, handle, anim, dir,
+             got >= 0 && X.ens ? X.ens->anims[got].name : "-");
+}
+static int row_near(int handle, int anim, int dir) {
+    if (!X.ens || !X.ens->nanims) return -1;
+    char nm[40];
+    for (int d = 0; d < 2; d++) {                       /* the same anim, the other direction, then direction 0 */
+        if (d == 1 && dir == 0) break;
+        snprintf(nm, sizeof nm, "s%d_%d_%d", handle & 0xffff, anim & 0xff, d ? 0 : (dir ^ 16) & 0xff);
+        int r = bank_anim(X.ens, nm);
+        if (r >= 0) { row_near_log(handle, anim, dir, r); return r; }
+    }
+    snprintf(nm, sizeof nm, "s%d_0_0", handle & 0xffff);
+    int r = bank_anim(X.ens, nm);
+    if (r >= 0) { row_near_log(handle, anim, dir, r); return r; }
+    snprintf(nm, sizeof nm, "s%d_", handle & 0xffff);
+    size_t len = strlen(nm);
+    for (int i = 0; i < X.ens->nanims; i++)
+        if (!strncmp(X.ens->anims[i].name, nm, len)) { row_near_log(handle, anim, dir, i); return i; }
+    row_near_log(handle, anim, dir, -1);
+    return -1;
 }
 static int mirror_of(int handle, int anim, int dir) {     /* session 26: 'm<handle>_<anim>_<dir>': a mirror alias of the dir - 16 row */
     char nm[40];
@@ -317,7 +352,7 @@ void csx_begin(const bank_t *ens, const bank_t *font, const char *const *dialog,
     X.ens = ens; X.font = font; X.dlg = dialog; X.ndlg = nlines;
     X.active = X.loaded; X.seg = 0; X.clock = 0; X.cur = 0; X.exhausted = 0; X.chsel_wait = 0; X.shown = 0; X.line = -1; X.prev = 0;
     X.fade = 0; X.fade_d = 0; X.fade_rgb = 0; X.wipe = 0;
-    for (int k = 0; k < X.nact; k++) { X.a[k].vis = 0; X.a[k].row = -1; X.a[k].mn = 0; X.a[k].ln = 0; X.a[k].an.b = NULL; }
+    for (int k = 0; k < X.nact; k++) { X.a[k].vis = 0; X.a[k].row = -1; X.a[k].mn = 0; X.a[k].ln = 0; X.a[k].said = 0; X.a[k].an.b = NULL; }
     int ok = ens && ens->nframes;
     X.row_box = ok ? bank_anim(ens, "dlgbox") : -1;
     X.row_name = ok ? bank_anim(ens, "dlgname") : -1;
@@ -360,6 +395,7 @@ static void xfire(const csx_ent_t *x) {
     case E_I: { if (X.a[x->a].locked) break;                     /* an actor the story code drives (the character select) */
                 int r = row_of(X.a[x->a].handle, x->v[0], x->v[1]), fl = 0;
                 if (r < 0) { r = mirror_of(X.a[x->a].handle, x->v[0], x->v[1]); fl = r >= 0; }   /* session 26: the base row drawn flipped */
+                if (r < 0) r = row_near(X.a[x->a].handle, x->v[0], x->v[1]);                     /* the bank is short of it */
                 X.a[x->a].row = r; if (!X.a[x->a].rk) X.a[x->a].flip = (uint8_t)fl;
                 if (r >= 0) { animator_t *an = &X.a[x->a].an; int c = X.ens->anims[r].count;
                               an->b = X.ens; an->anim = r; an->acc = 0; an->done = 0; an->loops = 0; an->frame = x->v[2] < c ? x->v[2] : c - 1; } } break;
@@ -437,6 +473,7 @@ void csx_actor_lock(int a, int on) { if (a >= 0 && a < X.nact) X.a[a].locked = o
 void csx_actor_image(int a, int anim, int dir, int frame) {
     if (a < 0 || a >= X.nact) return;
     int r = row_of(X.a[a].handle, anim, dir);
+    if (r < 0) { r = mirror_of(X.a[a].handle, anim, dir); if (r < 0) r = row_near(X.a[a].handle, anim, dir); }
     if (r < 0) return;
     animator_t *an = &X.a[a].an;
     if (an->anim == r && an->b == X.ens && frame < 0) return;      /* frame -1: keep a running animation */
@@ -505,13 +542,42 @@ int csx_update(const input_t *in) {
     return X.chsel_wait ? CSX_CHSEL : CSX_OK;
 }
 
+/* Is this actor meant to be seen?
+ *
+ * The scripts come from RV traces of the original, and a story room recycles the memory of objects it destroys: the
+ * trace then reports another object's state under the same address, and everything the generator could not tell apart
+ * ends up on one actor (tools/story_rv2scn.py --split-reuse / --by-class; its own note names room 76, where an address
+ * is reused by playerskincaroltail at frame 1). The visibility flag is what suffers: in dv_meet (the Dragon Valley
+ * opening) Carol stands on her feet in the view and speaks while every one of her 'v' entries says 0, and the room
+ * showed the dialog box over an empty jungle - the missing heroine of the report.
+ *
+ * So a heroine is drawn on the strength of what the script places: an image and a spot inside the view. The ways the
+ * original hides one are still honoured: the off-map sentinel (-32, -32), anything out of the view, a zero alpha, and
+ * an actor the story code drives itself (--chsel locks the select's slots). Everything else keeps its 'v' flag: a
+ * gimmick or an effect is a prop of some other scene of the room, drawn by its own animation, not a character. */
+int csx_draw_rule(int vis, int row, int skin, int locked, int alpha, int wx, int wy, float sx, float sy) {
+    return story_actor_shown(vis, row, skin, locked, alpha, wx, wy, sx, sy, SCREEN_W, SCREEN_H);
+}
+static int actor_shown(int k, float x, float y) {
+    if (!csx_draw_rule(X.a[k].vis, X.a[k].row, X.a[k].skin, X.a[k].locked, X.a[k].alpha, X.a[k].x, X.a[k].y, x, y)) return 0;
+    if (!X.a[k].vis && !X.a[k].said) {                    /* a report of a missing heroine needs this line */
+        X.a[k].said = 1;
+#ifdef FP_HOST_ENV
+        printf("story: actor %d (skin %d) drawn with v=0 at %.0f,%.0f\n", k, X.a[k].handle, (double)x, (double)y);
+#else
+        plat_log("story %s: actor %d (skin %d) drawn with v=0 at %.0f,%.0f", X.name, k, X.a[k].handle, (double)x, (double)y);
+#endif
+    }
+    return 1;
+}
 void csx_draw_actors(int pass) {
     if (!X.active || !X.ens || !X.ens->nframes) return;
     for (int k = 0; k < X.nact; k++) {
         int l = X.a[k].layer, ps = l <= 0 ? 0 : l == 1 ? 4 : l <= 3 ? 1 : l <= 5 ? 2 : 3;   /* session 26: json layer 1 over its own backdrops (pass 4; RV s81_g0l: the guards over the mountains) */
-        if (ps != pass || !X.a[k].vis || X.a[k].row < 0) continue;
+        if (ps != pass) continue;
         float x = (float)X.a[k].x, y = (float)X.a[k].y;
         if (pass != 3) { x -= floorf(G.camx); y -= floorf(G.camy); }   /* json layers 6-7 do not scroll (the HUD layers) */
+        if (!actor_shown(k, x, y)) continue;
         if (X.a[k].add) r_set_additive(1);
         if (X.a[k].rk) {                                  /* a rig part: rotated, the hologram's transparency (13345: alpha 255 - L) */
             int al = X.a[k].alpha * (255 - (int)(X.rig.L < 0 ? 0 : X.rig.L > 255 ? 255 : X.rig.L)) / 255;

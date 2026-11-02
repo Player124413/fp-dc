@@ -214,6 +214,15 @@ is in use (section 5).
 
 - Up to 255 actors (session 26; rows `s<handle>_<anim>_<dir>` in the room's `_ens` bank) with their animators, plus moves, the
   camera, parallax visibility (`pv`) and fades (black or white).
+- **When an actor is drawn** (`src/game/story_draw.h`, `csx_draw_rule`): the script's `v` flag decides for props, but a
+  heroine (`playerskin*`) is drawn whenever the script gives her an image and she stands in the view. A story room
+  recycles the memory of destroyed objects, and the trace then reports another object's state under the same address
+  (`tools/story_rv2scn.py --split-reuse`; its note names room 76, `sparkle3_399 -> playerskincaroltail_448`), which is
+  why in `dv_meet` every one of Carol's `v` entries says 0 while she stands on screen and speaks: the room showed the
+  dialog box over an empty jungle. The ways the original hides a heroine still hold - parked at `(-32, -32)`, out of the
+  view, `alpha 0`, or an actor the story code drives (`chsel` locks its slots). The log says when the rule fired
+  (`story <id>: actor <n> (skin <handle>) drawn with v=0 at x,y`). A row the bank is short of falls back to the same
+  animation's other direction, then direction 0, then any row of that object, and the log names the missing row.
 - Captions come from `story/captions.txt`, centred, with rows 20 px apart (RV).
 - The DialogBox uses the original rows (`dlgbox` / `dlgname` / `dlgarrow`) and the original font.
 - Ink comes from RE: `add` for set_shader 0x20, `a<alpha>` for the blend colour.

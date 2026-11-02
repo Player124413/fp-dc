@@ -215,6 +215,13 @@ the data and the save intact.
 
 ## The log (what to send when something is wrong)
 
+A story room's script comes from RV traces of the original, where a room recycles the memory of the objects it
+destroys, so a heroine's recorded "visible" flag can be wrong while she stands in the view (the Dragon Valley opening
+had Carol speaking over an empty jungle). The room therefore draws a heroine on the strength of her image and her spot
+in the view, and says so once per actor: `story dv_meet: actor 10 (skin 449) drawn with v=0 at 371,120`. A row the
+room's `_ens` bank is short of is replaced by the nearest pose of the same object, and the log names it
+(`story <id>: row s449_13_0 is not in the room's bank, using s449_13_16`).
+
 Every line the port logs goes to `fpdc.log` twice: logcat (tag `fpdc`, `fpdc/ui`) and a file
 
 ```
