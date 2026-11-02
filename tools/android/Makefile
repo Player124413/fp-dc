@@ -16,8 +16,8 @@ ANDROID_SRC := $(ROOT)/src/renderer/render_gles.c $(ROOT)/src/renderer/ui_gles.c
                $(ROOT)/src/platform/android/plat_android.c $(ROOT)/src/platform/android/snd_android.c \
                $(ROOT)/src/platform/android/i18n.c
 
-.PHONY: check syntax abi twiddle font colour uiorder present texlife anim audio shell selftest preview
-check: syntax abi twiddle font colour uiorder present texlife anim audio shell selftest
+.PHONY: check syntax abi twiddle font colour uiorder present texlife anim audio story shell selftest preview
+check: syntax abi twiddle font colour uiorder present texlife anim audio story shell selftest
 
 syntax:
 	@for f in $(ANDROID_SRC); do echo "  syntax-check $$f"; $(CC) $(SYNTAX) $$f || exit 1; done
@@ -52,6 +52,11 @@ texlife:
 anim:
 	@$(CC) -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-sign-compare -I$(STUB) -I$(ROOT)/src \
 	   -o /tmp/fpdc_check_anim check_anim.c -lm && /tmp/fpdc_check_anim
+
+# story: a scene must not sit behind an opaque cover that never lifts - rm5_spade carried one `fa 255` and played
+#        its whole cutscene as a black screen (a trace of the room's act fade caught at full black)
+story:
+	@python3 check_story_scripts.py
 
 # audio: one AAudio stream, the music/effect tempo, the ADPCM layouts (fake AAudio, no device)
 audio:

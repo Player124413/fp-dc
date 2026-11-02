@@ -391,7 +391,7 @@ def main():
         cov = [(addr, o) for addr, o in obj.items() if COV.match(o['cls'])]
         fr_ = sorted({f for _, o in cov for f in o['st']} | {f for f in (gone.get(ad) for ad, _ in cov) if f is not None} |
                      {f for f, x, y in cams if a.first <= f < a.end} | {a.first})
-        last = None; lastw = -999
+        last = None; lastw = -999; fa_out = []
         for f in fr_:
             vx, vy = view(f); blk = wht = 1.0; wx = -999
             for addr, o in cov:
@@ -403,8 +403,12 @@ def main():
                 if o['cls'].startswith('whitefade'): wht *= 1 - al / 255.
                 else: blk *= 1 - al / 255.
             cur_ = (round(255 * (1 - wht)), 1) if wht < 1 else (round(255 * (1 - blk)), 0)
-            if cur_ != last: put(f, 3, 'fa %d%s' % (cur_[0], ' 1' if cur_[1] else '')); last = cur_
+            if cur_ != last: fa_out.append((f, 'fa %d%s' % (cur_[0], ' 1' if cur_[1] else ''))); last = cur_
             if wx != lastw: put(f, 3, 'fw %d' % wx); lastw = wx
+        # A black cover that never lifts for the whole window cannot be what the original shows (the scene would be
+        # invisible): that single write is the room's act fade caught at full black (rm5_spade b28_g0), so fade in.
+        if len(fa_out) == 1 and fa_out[0][1] == 'fa 255': fa_out = [(fa_out[0][0], 'f 32')]
+        for f_, s_ in fa_out: put(f_, 3, s_)
     for c in a.caption:
         f0, f1, keys = c.split(',', 2)
         for r, k in enumerate(keys.split('|')): put(int(f0), 3, 'cap %d %s' % (r, k))

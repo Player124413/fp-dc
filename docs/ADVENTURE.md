@@ -248,6 +248,10 @@ The authoritative format is the header comment of `src/game/story.h`. In short:
   - The header has `scene`, `room`, `dialog` and `title`, plus `actor <n> <class>_<handle> <layer> [ink]` lines.
   - Then come `seg <k>` blocks of timed entries:
     `<t> p|m|i|v|c|say|close|s|o|u|f|chsel|cap|capx|pv ...`, ending with `end <t>`.
+- The screen cover: `fa <alpha> [1]` sets it, `f <frames>` fades from black over that many frames and `f -<frames>` to
+  black -- the black LevelCardFade of the original. `0 f 32` is how a scene opens on black and shows its picture; a scene
+  whose only cover write is `fa 255` can never show anything and plays as a black screen (D-133, `make -C tools/android
+  story` fails on that).
 - `story/dlg_<handle>.txt` holds the paragraphs. `story/captions.txt` holds the caption strings. `st<json>/` is the
   room.
 

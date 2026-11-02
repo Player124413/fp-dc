@@ -683,3 +683,20 @@ With it, one line per scene into the log, four frames in, so the next "black cut
 there with nothing on screen means the room has no picture to give (the data), not that the renderer skipped it.
 `cutscene.c` / `cutscene.h` are still byte-identical to cb30968 (D-131): this touches `game.c`, `objects.c` (a counter) and
 `story.c` (the log line) only.
+
+## D-133 (data): the black cutscene of rm5_spade was a cover that never lifts, not a missing backdrop
+The same report came back for one scene: `rm5_spade` (the Kingdom Stone dialogue of Relic Maze, an in-stage scene started
+by `rm_mantalith.c`), black picture, music and voices fine. The new D-132 log line explains it in one look --
+`story rm5_spade: room st29 g4 0, 0 objects on json layers 0-1` -- but an in-stage scene never needs them: the stage
+underneath is the picture. The cover is the real thing: the script's whole fade content was `0 fa 255`.
+`fa` is the traced LevelCardFade alpha (tools/story_rv2scn.py --covers). For rm5_spade the trace (b28_g0, frames 249-1571)
+saw that alpha at full black and never changing, because what lifts it in the original is the *room's act fade*, which the
+port does not run inside a story scene -- so the script's single write was a permanent full-screen cover, and the scene
+played end to end behind it. Every other script either opens uncovered or carries the fade itself (`dv_meet`: `51 f -51`).
+Fixed in the data: `0 fa 255` -> `0 f 32` (from black over 32 frames, the RV cover ramp of 8 alpha a frame), in
+`rm5_spade.scn` and `rm5_spade_c.scn`. `cutscene.c` / `cutscene.h` are untouched (D-131).
+Two guards, so this class cannot come back:
+- `tools/story_rv2scn.py`: a cover that is fully opaque and never changes for the whole traced window is not what the
+  original shows (the scene would be invisible) -- that lone write is emitted as `f 32`, a fade in, instead of `fa 255`.
+- `make -C tools/android story` (part of `check`; `check_story_scripts.py`) walks every script the way `csx_load` does and
+  fails when an opaque cover has no command that lowers it: `72 scenes open with a visible picture`.
