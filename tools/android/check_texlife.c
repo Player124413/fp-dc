@@ -9,6 +9,7 @@
  *
  * Links the real render_gles.c against a fake GL (no device, no NDK). */
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <stdint.h>
 #include <GLES3/gl3.h>
@@ -74,8 +75,22 @@ int glBlendFunc() { return 0; }
 int glClearColor() { return 0; }
 int glClear() { return 0; }
 
+/* the log is text here, not just a count: r_sprite_report() writes what it finds under a frame and the
+ * checks below read it back (a "part of the sprite is missing" report has to be answerable from the log) */
+static char logbuf[1 << 16];
+static size_t loglen;
 static int log_lines;
-void plat_log(const char *fmt, ...) { (void)fmt; log_lines++; }
+void plat_log(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(logbuf + loglen, sizeof logbuf - loglen, fmt, ap);
+    va_end(ap);
+    if (n > 0) {
+        size_t room = sizeof logbuf - loglen - 1;
+        loglen += (size_t)n < room ? (size_t)n : room;
+    }
+    log_lines++;
+}
 int ui_gles_init(void) { return 0; }         /* the shell UI shares the context: not needed here */
 
 /* the backend itself, so the test sees its real slot table and generation counter */
@@ -157,6 +172,62 @@ int main(void) {
         rgl_present();
         check(fbo_tex != 0 && bound_on[0] == fbo_tex, "the upscale samples the framebuffer texture");
         in_fbo = 0;
+    }
+
+
+    /* 7. a frame whose rect runs off its atlas is drawn WHOLE. The Dreamcast backend never cuts the quad:
+     *    the PVR clamps the sample to the edge of the texture. This backend used to truncate it, so the
+     *    same data lost a strip of the picture on the phone and was whole on the Dreamcast -- the
+     *    "she is not drawn all the way" report. The quad must keep the frame's size and sample past 1.0
+     *    (GL_CLAMP_TO_EDGE repeats the edge texel, exactly like the hardware). */
+    {
+        tex_t t;
+        fptx_make(buf, 8, 8, 1);                 /* an 8x8 sheet */
+        check(load(&t, buf, sizeof buf) == 0, "an 8x8 sheet loads for the overrun test");
+        r_begin();
+        r_sprite(&t, 6, 6, 8, 8, 100, 100, 8, 8, 0, 0xffffffff);   /* rect reaches (14,14) of an 8x8 sheet */
+        check(nquad == 1, "the overrunning frame is drawn (not dropped)");
+        if (nquad == 1) {
+            check(vbuf[1].x - vbuf[0].x == 8.0f && vbuf[3].y - vbuf[0].y == 8.0f,
+                  "it keeps the frame's own size, nothing is cut off");
+            check(vbuf[1].u > 1.0f && vbuf[3].v > 1.0f,
+                  "and samples past the edge, which GL_CLAMP_TO_EDGE repeats like the PVR");
+        }
+        check(strstr(logbuf, "runs past its") != NULL, "the overrun is still written into the log");
+        r_tex_free(&t);
+    }
+
+    /* 8. r_sprite_report() says what the sheet really holds under a frame: texels that draw, texels whose
+     *    palette entry is transparent (invisible however right the geometry is) and empty texels. Without
+     *    the difference, "the sprite is not drawn all the way" cannot be told from "the rect is wrong". */
+    {
+        tex_t t;
+        uint8_t sheet[16 + 8 * 8];
+        uint8_t pal[8 + 512];
+        memset(pal, 0, sizeof pal);
+        memcpy(pal, "FPPL", 4);
+        {   /* group 0: entry 0 is the transparent texel, 1 is opaque, 2 has no alpha bit (invisible) */
+            uint16_t hdr[2] = { 0, 3 };
+            memcpy(pal + 4, hdr, 4);
+            uint16_t e0 = 0x0000, e1 = 0x801f, e2 = 0x001f;
+            memcpy(pal + 8, &e0, 2);
+            memcpy(pal + 10, &e1, 2);
+            memcpy(pal + 12, &e2, 2);
+        }
+        fptx_make(sheet, 8, 8, 1);
+        for (int y = 0; y < 8; y++)
+            for (int x = 0; x < 8; x++)
+                sheet[16 + y * 8 + x] = (uint8_t)(y < 2 ? 1 : y < 4 ? 2 : 0);
+        check(load(&t, sheet, sizeof sheet) == 0, "the sheet with three kinds of texel loads");
+        check(r_pal_load(pal, sizeof pal) == 0, "and its palette loads");
+        loglen = 0; logbuf[0] = 0;
+        check(r_sprite_report(&t, 0, 0, 8, 8) == 0, "the frame is read out of the atlas");
+        check(strstr(logbuf, "64 texels: 16 draw, 16 have an index but are invisible in that palette, 32 empty") != NULL,
+              "the three kinds of texel are counted");
+        check(strstr(logbuf, "|########|") != NULL, "the rows that draw are marked '#'");
+        check(strstr(logbuf, "|--------|") != NULL, "the rows the palette hides are marked '-'");
+        check(strstr(logbuf, "|........|") != NULL, "the empty rows are marked '.'");
+        r_tex_free(&t);
     }
 
     printf("texture handle lifecycle %s\n", fails ? "FAILED" : "ok");

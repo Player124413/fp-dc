@@ -172,6 +172,14 @@ void r_tint(float x, float y, float w, float h, uint32_t rgb) {      /* dst *= (
             fb[sy * SCREEN_W + sx] = ((((d >> 16) & 255) * kr / 255) << 16) | ((((d >> 8) & 255) * kg / 255) << 8) | ((d & 255) * kb / 255);
         }
 }
+/* The Android backend keeps the texel indices of every paletted atlas so this can print what a frame
+ * really contains (src/renderer/render_gles.c). The Dreamcast has 8 MB of VRAM and no room for a second
+ * copy, and it draws the same data straight to the PVR, so here it says so and does nothing. */
+int r_sprite_report(const tex_t *t, int u, int v, int uw, int vh) {
+    (void)t; (void)u; (void)v; (void)uw; (void)vh;
+    return -1;
+}
+
 void r_rect(float x, float y, float w, float h, uint32_t argb) {
     int x0 = (int)floorf(x), y0 = (int)floorf(y), x1 = (int)floorf(x + w), y1 = (int)floorf(y + h);
     for (int sy = y0 < 0 ? 0 : y0; sy < y1 && sy < SCREEN_H; sy++)

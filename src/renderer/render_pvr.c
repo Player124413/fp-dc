@@ -275,6 +275,14 @@ void r_tint(float x, float y, float w, float h, uint32_t rgb) {
     pvr_prim(&col_hdr_mul, sizeof col_hdr_mul); cur_hdr = -3;
     quad(x * SX + OFF_X, y * SY + OFF_Y, (x + w) * SX + OFF_X, (y + h) * SY + OFF_Y, 0, 0, 0, 0, rgb | 0xff000000);
 }
+/* The Android backend keeps the texel indices of every paletted atlas so this can print what a frame
+ * really contains (src/renderer/render_gles.c). The Dreamcast has 8 MB of VRAM and no room for a second
+ * copy, and it draws the same data straight to the PVR, so here it says so and does nothing. */
+int r_sprite_report(const tex_t *t, int u, int v, int uw, int vh) {
+    (void)t; (void)u; (void)v; (void)uw; (void)vh;
+    return -1;
+}
+
 void r_rect(float x, float y, float w, float h, uint32_t argb) {
     if (x + w < 0 || y + h < 0 || x >= SCREEN_W || y >= SCREEN_H) return;
     uint32_t a = argb >> 24;

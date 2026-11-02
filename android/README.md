@@ -304,6 +304,29 @@ she stands on flat ground is a terrain-angle bug; a rect wider than the atlas is
 also refuses to inherit a squash-and-stretch from a gimmick: it forces the neutral scale first and says so
 in the log (`player: drawn under a leaked scale 2.00 x 1.00, reset`).
 
+The rect alone cannot tell "the sheet is empty under it" from "the palette hides it", so the first four
+draws of a level also read the atlas out into the log (the Android backend keeps the texel indices of every
+paletted atlas for exactly this; it is freed with the slot):
+
+```
+sprite report: frame (128,64 41x47) of its 512x256 atlas, palette row 0 (61 of 256 opaque)
+sprite report: 1927 texels: 1650 draw, 0 have an index but are invisible in that palette, 277 empty
+sprite report: |..........##################.......|
+sprite report: |....#############################.....|
+...
+```
+
+`#` is a texel that draws, `-` has an index but its palette entry's alpha bit is 0 (invisible however right
+the geometry is) and `.` is index 0, nothing in the atlas at all. Rows and columns in which nothing draws
+are named as ranges before the picture. This is what a "she is not drawn all the way" report needs: a hole
+in the middle of the `#` area is the sheet, a `-` band there is the palette, and an all-`#` picture means
+the frame is fine and something else is covering her.
+
+A frame whose rect runs past its atlas is **drawn whole**, sampling past 1.0 with `GL_CLAMP_TO_EDGE`: that
+is what the Dreamcast backend has always done (it has no guard at all, the PVR clamps the sample to the edge
+of the texture), and cutting the quad here instead used to lose a strip of the picture that was whole on the
+Dreamcast. The overrun is still written into the log (`gles: frame (...) clipped to its ... atlas`).
+
 A native crash writes a self-contained block into the log before the system takes the process:
 
 ```

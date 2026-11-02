@@ -46,6 +46,11 @@ typedef struct {
     GLuint id;
     uint32_t gen;                          /* which load this slot holds (see tex_t.gen) */
     int w, h, indexed, palrow, etc2;
+    /* The indices as they were uploaded (indexed atlases only, NULL otherwise). The GPU has no way to tell
+     * "this frame is drawn but two thirds of it is empty": r_sprite_report() reads this copy and prints the
+     * rect, so a "part of the sprite is missing" report can be answered from the log alone. A level's
+     * atlases are the Dreamcast's whole 8 MB of VRAM at most, so the copy costs a few MB. */
+    uint8_t *ix;
 } gtex_t;
 
 static gtex_t texs[MAXTEX];
@@ -475,7 +480,7 @@ int r_tex_load(tex_t *t, const void *data, size_t size) {
     glBindTexture(GL_TEXTURE_2D, id);
     tex_params(0);
     gtex_t *g = &texs[slot];
-    g->w = w; g->h = h; g->id = id; g->indexed = 0; g->palrow = grp & 3; g->etc2 = 0;
+    g->w = w; g->h = h; g->id = id; g->indexed = 0; g->palrow = grp & 3; g->etc2 = 0; g->ix = NULL;
     int ok = 0, bytes = 0;
 
     if (fmt == 1 || fmt == 2 || fmt == 3) {
@@ -498,7 +503,7 @@ int r_tex_load(tex_t *t, const void *data, size_t size) {
         }
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, ix);
-        free(ix);
+        g->ix = ix;                                      /* kept for r_sprite_report, freed with the slot */
         g->indexed = 1;
         bytes = w * h;
         ok = 1;
@@ -550,6 +555,8 @@ void r_tex_free(tex_t *t) {
     if (!tex_live(t)) { t->id = -1; t->gen = 0; return; }
     flush();
     glDeleteTextures(1, &texs[t->id].id);
+    free(texs[t->id].ix);
+    texs[t->id].ix = NULL;
     texs[t->id].id = 0;
     texs[t->id].gen = 0;
     t->id = -1;
@@ -559,8 +566,11 @@ void r_tex_free(tex_t *t) {
 void r_reset(void) {
     flush();
     vtex_kb = 0;
-    for (int i = 0; i < ntex; i++)
+    for (int i = 0; i < ntex; i++) {
         if (texs[i].id) { glDeleteTextures(1, &texs[i].id); texs[i].id = 0; }
+        free(texs[i].ix);
+        texs[i].ix = NULL;
+    }
     ntex = 0;
 }
 
@@ -700,13 +710,14 @@ void rgl_present(void) {
  * size, which is what tells a "the sprite is not drawn at all" report apart from "it is drawn somewhere
  * else". A long tail of these once meant a leaked texture slot (a failed bank load kept its atlas). */
 /* a frame whose rect runs off its atlas: the bank loader rejects those, so seeing one means the rect
- * was changed after the load (or came from a stale animator). Log the first few: a smear on screen is
- * this, and the numbers say which sprite it is. */
+ * was changed after the load (or came from a stale animator). Log the first few: the numbers say which
+ * sprite it is (and that the frame is drawn whole, sampling the clamped edge, as the PVR does). */
 static int clip_logged;
 static void clip_log(const tex_t *t, int u, int v, int uw, int vh) {
     if (clip_logged >= 8) return;
     clip_logged++;
-    plat_log("gles: frame (%d,%d %dx%d) clipped to its %dx%d atlas\n", u, v, uw, vh, t->w, t->h);
+    plat_log("gles: frame (%d,%d %dx%d) runs past its %dx%d atlas, drawn whole (edge texel repeats)\n",
+             u, v, uw, vh, t->w, t->h);
 }
 
 static void sprite_skip(const tex_t *t, int uw, int vh) {
@@ -718,13 +729,13 @@ static void sprite_skip(const tex_t *t, int uw, int vh) {
 void r_sprite(const tex_t *t, int u, int v, int uw, int vh, float x, float y, float w, float h, int flip, uint32_t argb) {
     if (!tex_live(t) || w <= 0 || h <= 0) { rgl_skips++; sprite_skip(t, uw, vh); return; }
     if (x + w < 0 || y + h < 0 || x >= SCREEN_W || y >= SCREEN_H) return;
-    {   /* a frame that claims to be larger than its atlas samples the clamped edge texels and smears a
-         * stripe of them across the sprite (the "the girl has graphics bugs" look): cut it to the atlas */
-        const gtex_t *g = &texs[t->id];
-        if (u < 0) u = 0;
-        if (v < 0) v = 0;
-        if (u + uw > g->w) { uw = g->w - u; clip_log(t, u, v, uw, vh); }
-        if (v + vh > g->h) { vh = g->h - v; clip_log(t, u, v, uw, vh); }
+    /* The Dreamcast backend draws the frame's whole rect and lets the PVR clamp the sample to the edge of
+     * the texture (render_pvr.c r_sprite has no guard at all). This backend used to CUT the quad to the
+     * atlas instead, so a frame whose rect overruns by even one texel lost that strip of the picture on the
+     * phone and was whole on the Dreamcast -- the "she is not drawn all the way" report. GL_CLAMP_TO_EDGE
+     * (set in tex_params) now does exactly what the hardware did; the numbers still go into the log. */
+    {   const gtex_t *g = &texs[t->id];
+        if (u < 0 || v < 0 || u + uw > g->w || v + vh > g->h) clip_log(t, u, v, uw, vh);
         if (uw <= 0 || vh <= 0) return;
     }
     bind_tex(t);
@@ -738,16 +749,10 @@ void r_sprite(const tex_t *t, int u, int v, int uw, int vh, float x, float y, fl
 void r_sprite_rot(const tex_t *t, int u, int v, int uw, int vh, float px, float py, float hx, float hy,
                   float angle, int flip, uint32_t argb) {
     if (!tex_live(t)) { rgl_skips++; return; }
-    {   /* the same guard r_sprite has: a frame that claims more than its atlas exists samples the
-         * clamped edge texels, which stretches one row of the sheet across the whole quad - a long
-         * smeared streak that follows the sprite around (the player is the only thing drawn rotated) */
+    {   /* same rule as r_sprite: the Dreamcast draws the whole rect and clamps the sample, it never cuts the
+         * quad, so a frame that overruns loses nothing here either (it is still logged) */
         const gtex_t *g = &texs[t->id];
-        int cl = 0;
-        if (u < 0) { u = 0; cl = 1; }
-        if (v < 0) { v = 0; cl = 1; }
-        if (u + uw > g->w) { uw = g->w - u; cl = 1; }
-        if (v + vh > g->h) { vh = g->h - v; cl = 1; }
-        if (cl) clip_log(t, u, v, uw, vh);
+        if (u < 0 || v < 0 || u + uw > g->w || v + vh > g->h) clip_log(t, u, v, uw, vh);
         if (uw <= 0 || vh <= 0) return;
     }
     if (flip) hx = uw - 1 - hx;
@@ -776,6 +781,83 @@ void r_sprite_rot(const tex_t *t, int u, int v, int uw, int vh, float px, float 
     }
     nquad++;
     r_stat_polys++;
+}
+
+/* What the atlas really holds under one frame, into the log.
+ *
+ * "The sprite is not drawn all the way" reads the same whether the frame rect is right and the sheet is
+ * empty there, or the sheet is fine and the palette makes part of it invisible -- so the two are told
+ * apart with numbers: '#" draws, '-' has an index but the palette entry's alpha bit is 0 (that texel is
+ * invisible however correct the geometry), '.' is index 0, nothing in the atlas at all. The ranges of
+ * empty rows and columns say whether a hole runs across the whole picture, and the palette line says
+ * whether that palette group can show anything in the first place. */
+int r_sprite_report(const tex_t *t, int u, int v, int uw, int vh) {
+    if (!t || !tex_live(t)) { plat_log("sprite report: the handle is dead, there is no atlas to read\n"); return -1; }
+    const gtex_t *g = &texs[t->id];
+    if (!g->ix) {
+        plat_log("sprite report: %dx%d keeps no index copy (%s)\n", g->w, g->h,
+                 g->etc2 ? "ETC2" : "direct colour");
+        return -1;
+    }
+    if (u < 0) u = 0;
+    if (v < 0) v = 0;
+    if (u + uw > g->w) uw = g->w - u;
+    if (v + vh > g->h) vh = g->h - v;
+    if (uw <= 0 || vh <= 0) {
+        plat_log("sprite report: frame (%d,%d %dx%d) does not overlap its %dx%d atlas\n", u, v, uw, vh, g->w, g->h);
+        return -1;
+    }
+    static uint16_t rowany[1024], colany[1024];
+    long draw = 0, hidden = 0, empty = 0;
+    int nr = vh > 1024 ? 1024 : vh, nc = uw > 1024 ? 1024 : uw;
+    memset(rowany, 0, sizeof rowany[0] * (size_t)nr);
+    memset(colany, 0, sizeof colany[0] * (size_t)nc);
+    for (int y = 0; y < nr; y++)
+        for (int x = 0; x < nc; x++) {
+            int ix = g->ix[(size_t)(v + y) * g->w + u + x];
+            if (!ix) { empty++; continue; }
+            if (pals[g->palrow & 3][ix] & 0x8000) draw++; else { hidden++; continue; }
+            rowany[y]++; colany[x]++;
+        }
+    int op = 0;
+    for (int i = 1; i < 256; i++) if (pals[g->palrow & 3][i] & 0x8000) op++;
+    plat_log("sprite report: frame (%d,%d %dx%d) of its %dx%d atlas, palette row %d (%d of 256 opaque)\n",
+             u, v, uw, vh, g->w, g->h, g->palrow & 3, op);
+    plat_log("sprite report: %ld texels: %ld draw, %ld have an index but are invisible in that palette, %ld empty\n",
+             (long)nr * nc, draw, hidden, empty);
+    {   /* the rows and columns in which nothing draws at all: a frame cut by the edge of the sheet, or a rect
+         * that lies across the empty padding between two sprites, shows up here as a range in the middle */
+        int y = 0;
+        while (y < nr) {
+            if (rowany[y]) { y++; continue; }
+            int s = y;
+            while (y < nr && !rowany[y]) y++;
+            plat_log("sprite report: rows %d..%d of the frame draw nothing\n", s, y - 1);
+        }
+        int x = 0;
+        while (x < nc) {
+            if (colany[x]) { x++; continue; }
+            int s = x;
+            while (x < nc && !colany[x]) x++;
+            plat_log("sprite report: columns %d..%d of the frame draw nothing\n", s, x - 1);
+        }
+    }
+    {   /* the picture itself, at most 64 columns: one character per texel (or per cell of step x step) */
+        int sx = (uw + 63) / 64, sy = (vh + 63) / 64, n = 0;
+        if (sx < 1) sx = 1;
+        if (sy < 1) sy = 1;
+        char line[80];
+        for (int y = 0; y < vh && n < 64; y += sy, n++) {
+            int k = 0;
+            for (int x = 0; x < uw && k < 64; x += sx, k++) {
+                int ix = g->ix[(size_t)(v + y) * g->w + u + x];
+                line[k] = !ix ? '.' : (pals[g->palrow & 3][ix] & 0x8000) ? '#' : '-';
+            }
+            line[k] = 0;
+            plat_log("sprite report: |%s|%s\n", line, (sx > 1 || sy > 1) ? " (every 2nd+ texel)" : "");
+        }
+    }
+    return 0;
 }
 
 void r_rect(float x, float y, float w, float h, uint32_t argb) {

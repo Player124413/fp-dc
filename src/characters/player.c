@@ -1339,6 +1339,7 @@ void player_update(player_t *p, const input_t *in) {
  * (G.lilac, G.hair, G.objs). A draw that runs before the next update would read a freed bank: a garbage
  * frame rect, which is drawn as a stretched smear. game_unload_all() drops them. */
 static int draw_trace_left;                /* player draws still to be written into the log */
+static int report_left;                    /* atlas reports still to be written (the first draws of a level) */
 
 void player_unload_banks(void) {
     hair.b = NULL;
@@ -1348,6 +1349,7 @@ void player_unload_banks(void) {
     for (int i = 0; i < NPFX; i++) pfx[i].an.b = NULL;
     G.p.an.b = NULL;
     draw_trace_left = 24;                     /* the first draws of the new level go into the log */
+    report_left = 4;                          /* and their atlases are read out into it (skin and hair) */
     fx_trace_left = 16;                       /* and the first sparkle draws, which are small enough to go wrong alone */
 }
 
@@ -1360,13 +1362,17 @@ static void player_trace(const char *what, const bank_t *b, const animator_t *an
     if (!b || !f || !an->b) return;
     int v; const tex_t *t = bank_frame_tex(b, f, &v);
     int odd = !f->w || !f->h;
-    if (t && t->w > 0 && (f->u + f->w > t->w || f->v + f->h > t->h || f->w > t->w / 2)) odd = 1;
+    if (t && t->w > 0 && (f->u + f->w > t->w || v + f->h > t->h || f->w > t->w / 2)) odd = 1;
     n++;
+    /* a page-2 frame carries the second-atlas bit in v: it is not part of the rect */
     if (draw_trace_left <= 0 && !odd && (n % 240)) return;
     if (draw_trace_left > 0) draw_trace_left--;
     const char *nm = (an->anim >= 0 && an->anim < b->nanims) ? b->anims[an->anim].name : "?";
     plat_log("player %s: anim \"%s\" frame %d, rect (%d,%d %dx%d) in %dx%d, flip %d, rot %.1f\n",
-             what, nm, an->frame, f->u, f->v, f->w, f->h, t ? t->w : 0, t ? t->h : 0, flip, (double)rot);
+             what, nm, an->frame, f->u, v, f->w, f->h, t ? t->w : 0, t ? t->h : 0, flip, (double)rot);
+    /* "she is not drawn all the way": the rect alone cannot say whether the sheet is empty under it or the
+     * palette hides it, so the first frames of a level are read out of the atlas as well */
+    if (t && report_left > 0) { report_left--; r_sprite_report(t, f->u, v, f->w, f->h); }
 }
 
 void player_draw(const player_t *p) {

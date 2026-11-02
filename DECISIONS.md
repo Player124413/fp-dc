@@ -522,3 +522,19 @@ whenever a scene is ported (arc 3 inserted jc_cave_cm), so an old save would hav
 permanent number in tables/story/sids.json (append-only; tests/test_story_sids.py freezes the given ones), written into
 story.txt as sid=. A character variant (the same json frame and g4, chosen by chr_variant()) names its base scene with
 "sid_of" and shares its number, so the 64 numbers are enough (44 used + 3 in groups D / E at the end of session 25).
+
+## D-123 (Android): a sprite frame is never cut by its atlas; the Android backend answers "what is under this frame" from the log
+Reported from a phone: "her sprite is not drawn all the way" -- part of the silhouette missing, whole in the Dreamcast build. The
+two backends did not draw the same picture: `render_pvr.c` has no guard at all (the PVR clamps a sample to the edge of the
+texture, so an overrunning frame repeats its last texel row/column), while `render_gles.c` truncated the quad to the atlas and
+therefore lost that strip of the picture on the phone. The GLES guards now only log: `GL_CLAMP_TO_EDGE` (already set in
+`tex_params`) repeats the edge texel exactly like the hardware, and the frame keeps its own width and height, so `hx`/`hy` of a
+rotated or flipped draw are the ones the Dreamcast uses too. The log line is now
+`gles: frame (...) runs past its ... atlas, drawn whole (edge texel repeats)`.
+The rect alone cannot tell "the sheet is empty under it" (a packing/import bug) from "the palette entry is transparent there" (a
+wrong palette group, which draws nothing for that index however right the geometry is), so the GLES backend keeps the uploaded
+indices of every paletted atlas (`gtex_t.ix`, freed with the slot -- a level's atlases are at most the Dreamcast's 8 MB) and
+`r_sprite_report()` prints the frame's texels into the log: `#` draws, `-` has an index its palette hides, `.` is empty, plus the
+ranges of rows/columns that draw nothing and the palette row's opaque count. The first four draws of a level read their frames
+out that way. `tools/android/check_texlife.c` pins both: an overrunning frame keeps its size and samples past 1.0, and a sheet
+built out of the three kinds of texel is counted and mapped as expected.

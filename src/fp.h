@@ -191,6 +191,10 @@ void   r_sprite_rot(const tex_t *t, int u, int v, int uw, int vh, float px, floa
 void   r_end(void);
 void   r_tex_free(tex_t *t);           /* free one texture (a stale handle is only dropped, not freed) */
 int    r_tex_alive(const tex_t *t);    /* 1 = this handle still refers to a loaded texture */
+/* Write into the log what the atlas really holds under one frame: how much of the rect draws, how much
+ * has data but no visible palette entry, how much is empty, and where. Only the Android backend keeps the
+ * texel indices for this (the Dreamcast build answers "not kept"), and only a few calls of it are made. */
+int    r_sprite_report(const tex_t *t, int u, int v, int uw, int vh);
 void   r_reset(void);                 /* free all textures (level change) */
 void   r_tint(float x, float y, float w, float h, uint32_t rgb);   /* dst *= (1 - rgb) */
 void   r_set_additive(int on);       /* following sprites drawn additively (Chowdren shader 0x20) */
