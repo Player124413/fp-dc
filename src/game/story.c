@@ -380,6 +380,16 @@ static void pause_update(const input_t *in) {
     }
 }
 
+/* One line per scene, a few frames in: the room, what its back pass drew, and the room's bank.  "The cutscene is a black
+ * screen" is answered by the numbers: a room that neither draws pieces nor back objects has no picture to paint, and the
+ * room's bank row count says whether the actors could have found their rows at all.  Four frames are enough for
+ * objects_draw(0) to have run once (game_draw). */
+extern int obj_drawn_pass0;                          /* objects.c: what the json layer 0-1 pass drew last frame */
+static void scene_log(int id) {
+    if (id < 0 || id >= nsc) return;
+    plat_log("story %s: room st%d g4 %d, %d objects on json layers 0-1 (the room's backdrop), the room's bank has %d rows",
+             SC[id].name, SC[id].room, SC[id].g4, obj_drawn_pass0, G.ens.nanims);
+}
 void story_update(const input_t *in) {
     G.frame++; G.frame_draw_t++;
     if (S.scene < 0) return;
@@ -395,6 +405,10 @@ void story_update(const input_t *in) {
          * pause -- "half of the audio goes away when you pause". */
         music_pause(); snd_pause_samples(1); snd_play_orig(63, 230, 128);
         return;
+    }
+    {   static int logged = -1, fr;                     /* the scene's line into the log, four frames in (D-132) */
+        if (S.scene != logged) { logged = S.scene; fr = 0; }
+        else if (S.scene >= 0 && ++fr == 4) scene_log(S.scene);
     }
     par_update();
     static uint32_t prev; uint32_t p = prev; prev = in->pressed;

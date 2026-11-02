@@ -33,8 +33,6 @@ twiddle:
 font:
 	@python3 make_font.py --check
 
-# the story actor draw rule (src/game/story_draw.h): what a story room draws and what it must keep hidden
-
 colour:
 	@$(CC) -std=gnu11 -Wall -Wextra -o /tmp/fpdc_check_colour check_colour.c && /tmp/fpdc_check_colour
 

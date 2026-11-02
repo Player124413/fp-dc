@@ -1105,7 +1105,11 @@ void obj_draw_view_tint(uint32_t rgb, int alpha) {
 
 /* pass 0: objects on layers 0-1 (before the play layer's pieces), 1: layer 2, 2: layers 3+ (after Lilac);
  * 3 (session 26): the stage modules' view overlays on json layer 5, after the layer 4-7 pieces and before the HUD */
+int obj_drawn_pass0;                                /* objects the json layer 0-1 pass drew last frame: a story room logs it
+                                                     * (story.c, D-132), because a room whose backdrop is neither a piece nor an
+                                                     * object is a black view with the sound playing */
 void objects_draw(int pass) {
+    if (pass == 0) obj_drawn_pass0 = 0;
     if (pass == 3) { tb_boss_draw_overlay(); fd_enemy_draw(3); fd_boss_draw(3); fd_gim_draw(3); return; }   /* + FD1b's alarm light, fd1a's subtitle */
     for (int i = 0; i < G.nobjs; i++) {
         const obj_t *o = &G.o[i];
@@ -1141,6 +1145,7 @@ void objects_draw(int pass) {
         if (o->scale != 0 && o->scale != 1.f) r_set_scale(o->scale);
         if (o->ang != 0 || (o->scale != 0 && o->scale != 1.f)) frame_draw_rot(o->an.b, anim_frame(&o->an), sx, sy, o->ang, o->flip, col);
         else frame_draw(o->an.b, anim_frame(&o->an), sx, sy, o->flip, col);
+        if (pass == 0) obj_drawn_pass0++;
         if (o->type >= OT_MON_WOOD && o->type <= OT_MON_WATER) shield_preview_draw(o, sx, sy);
         r_set_scale(1.f); r_set_additive(0);
         if (inv) r_set_invert(0);

@@ -667,3 +667,19 @@ This is the third rule to come and go on this bug -- D-126 widened the rule to p
 and both were taken back, as is this one. What that history says is that the drawing rule was never the fault: the scenes'
 data is what differs from the original, and the way to fix it is in the scene data (`tables/story/scripts/*.scn` through
 `tools/story_rv2scn.py`), not in a wider `if` in the renderer.
+
+## D-132 (Android): a story room draws its own backdrop (json layers 0-1), and logs what it found
+Reported from level 2: "the cutscene started and the screen is black, the sound is all there". Nothing is guessed here -- the
+call is the one the level path already makes: `game_draw()` ran `objects_draw(0)` only `if (!story)`. That pass is json
+layers 0-1, i.e. the room's own backdrop planes (sky, jungle, the far picture). A scene script carries only the objects its
+RV trace saw *move*: in `dv_meet` the three `levelbackgroundplane2_3902` are actors, which is why that one scene always had a
+picture, while in every other scene (dv_crash and the seventy-odd others) the same planes stay what they are -- level
+objects -- and were drawn by nobody. The room importer keeps those placements on purpose (`tools/import_frame.py`: the
+objects within 64 px of the scene's views), so they are in the room and only the pass was missing.
+The play layer stays off (`objects_draw(1/2/3)` and the object update are still `!story`), so nothing a scene drives can be
+drawn twice and no character of the room appears under the actors.
+With it, one line per scene into the log, four frames in, so the next "black cutscene" report is readable without a guess:
+`story dv_crash: room st76 g4 1, 12 objects on json layers 0-1 (the room's backdrop), the room's bank has 150 rows` -- a zero
+there with nothing on screen means the room has no picture to give (the data), not that the renderer skipped it.
+`cutscene.c` / `cutscene.h` are still byte-identical to cb30968 (D-131): this touches `game.c`, `objects.c` (a counter) and
+`story.c` (the log line) only.

@@ -196,8 +196,12 @@ is in use (section 5).
   a level with its tiles, parallax and the `_ens` bank holding the actor rows. It then sets the scene's sound set, loads
   `ui/font` and `story/dlg_<handle>.txt`, and calls `csx_begin`. Each scene loads its own assets; nothing is resident
   between scenes.
-- **During a scene:** level objects are not drawn or updated. Actors are drawn in three passes (behind the play layer,
-  with it, in front), and the json layers 6-7 are drawn screen-fixed.
+- **During a scene:** level objects are not updated, and only the ones on json layers 0-1 are drawn -- the room's own
+  backdrop (sky, jungle, the far picture). That pass has to run: a scene script carries only the objects its RV trace saw
+  move, so `dv_meet`'s backdrop planes are actors while every other scene's are not, and a room that neither draws its
+  pieces nor those objects is a black view with the sound playing (D-132). The play layer (2+) stays off, so the room's
+  own characters are not drawn under the actors. Actors themselves are drawn in three passes (behind the play layer, with
+  it, in front), and the json layers 6-7 are drawn screen-fixed.
 - **Completion** is `complete(how)`: DONE_END, DONE_SKIP or DONE_STAGE. A done flag makes it run exactly once. It:
   1. stops voices and music;
   2. sets the seen flag;
@@ -493,7 +497,8 @@ therefore gets its own room, **st83&lt;list&gt;**. `jc_cave_cm` shares st8325 wi
 - **tools/import_frame.py:**
   - It keeps the placements within 64 px of the views (INFERRED margin), plus the screen-fixed layers 6-7, the start point
     and the parallax.
-  - The room's `_ens` holds only its scenes' rows, because MODE_STORY neither draws nor updates the level objects.
+  - The room's `_ens` holds only its scenes' rows, because MODE_STORY updates no level object and draws only the json
+    layer 0-1 ones (the backdrop, D-132).
   - Rooms without `view` (arc 1) are built as before.
 - **tools/import_story.py** builds st&lt;room&gt; from `frame`.
 - **Disc and builder:** `make_disc.py` and the builder read the room numbers from story.txt.
