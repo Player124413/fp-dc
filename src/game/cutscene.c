@@ -576,6 +576,7 @@ void csx_draw_actors(int pass) {
         int l = X.a[k].layer, ps = l <= 0 ? 0 : l == 1 ? 4 : l <= 3 ? 1 : l <= 5 ? 2 : 3;   /* session 26: json layer 1 over its own backdrops (pass 4; RV s81_g0l: the guards over the mountains) */
         if (ps != pass) continue;
         float x = (float)X.a[k].x, y = (float)X.a[k].y;
+        int tv = 0;                                         /* the frame's v without the second-atlas bit */
         if (pass != 3) { x -= floorf(G.camx); y -= floorf(G.camy); }   /* json layers 6-7 do not scroll (the HUD layers) */
         if (!actor_shown(k, x, y)) continue;
         if (X.a[k].add) r_set_additive(1);
@@ -583,8 +584,19 @@ void csx_draw_actors(int pass) {
             int al = X.a[k].alpha * (255 - (int)(X.rig.L < 0 ? 0 : X.rig.L > 255 ? 255 : X.rig.L)) / 255;
             if (al > 0 && x > -300 && x < SCREEN_W + 300 && y > -300 && y < SCREEN_H + 300)
                 frame_draw_rot(X.ens, anim_frame(&X.a[k].an), x, y, X.a[k].ang, X.a[k].flip, (uint32_t)al << 24 | 0xffffff);
-        } else
-        frame_draw(X.ens, anim_frame(&X.a[k].an), x, y, X.a[k].flip, (uint32_t)X.a[k].alpha << 24 | 0xffffff);
+        } else {
+            /* A story scene draws the heroine through here, not through player_draw(), so the sprite dump
+             * has to cover this path too: the report "her sprite is broken in the cutscene" has to come
+             * back with the same atlas/drawn/over masks a gameplay frame gets (see render_gles.c). */
+            const frame_t *f = anim_frame(&X.a[k].an);
+            const tex_t *tt = f && X.ens ? bank_frame_tex(X.ens, f, &tv) : NULL;
+            if (tt && X.a[k].skin)
+                r_dump_begin(tt, f->u, tv, f->w, f->h, x, y, f->hx, f->hy, 0.f, X.a[k].flip,
+                             X.a[k].an.anim >= 0 && X.a[k].an.anim < X.ens->nanims ? X.ens->anims[X.a[k].an.anim].name : "?",
+                             X.a[k].an.frame);
+            frame_draw(X.ens, f, x, y, X.a[k].flip, (uint32_t)X.a[k].alpha << 24 | 0xffffff);
+            r_dump_drawn();
+        }
         if (X.a[k].add) r_set_additive(0);
     }
 }

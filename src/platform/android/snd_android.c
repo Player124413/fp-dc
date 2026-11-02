@@ -78,6 +78,7 @@ typedef struct {
     int freq;                          /* the AICA FREQ argument in Hz (0/<=1000: the sample's own rate) */
     int loop;
     int on;
+    int frozen;                        /* held by snd_pause_samples(): silent, keeps its place */
     int reserved;                      /* a looping channel the game keeps a handle on: never stolen */
     int serial;
 } voice_t;
@@ -149,7 +150,7 @@ static int load_wav(const char *name, const uint8_t *d, size_t size, snd_t *out)
 
 /* ------------------------------------------------------------------ AAudio */
 static AAudioStream *stream;
-static int snd_suspended;
+static int susp_mask;                     /* see snd_android.h: any bit keeps the stream paused */
 static volatile int stream_dead;          /* the error callback: the device took the stream away */
 static volatile long long cb_frames;       /* frames delivered, for the one-time rate check */
 static volatile uint64_t cb_t0;
@@ -161,7 +162,7 @@ static aaudio_data_callback_result_t audio_cb(AAudioStream *s, void *ud, void *d
     (void)s; (void)ud;
     if (!cb_t0) cb_t0 = plat_time_us();
     cb_frames += frames;
-    if (snd_suspended) {
+    if (susp_mask) {
         memset(data, 0, (size_t)frames * 4);
         return AAUDIO_CALLBACK_RESULT_CONTINUE;
     }
@@ -227,15 +228,25 @@ int snd_init_state(void) {
     return 0;
 }
 
-void snd_suspend(void) {
-    snd_suspended = 1;
+void snd_suspend(int reason) {
+    int was = susp_mask;
+    susp_mask |= reason;
+    if (was == susp_mask) return;          /* already stopped for this (or another) reason */
+    plat_log("snd: mixing stopped (reasons 0x%x)", susp_mask);
     cb_t0 = 0;                             /* a pause is not part of the delivery rate */
     if (stream) AAudioStream_requestPause(stream);
 }
-void snd_resume(void) {
-    snd_suspended = 0;
+void snd_resume(int reason) {
+    int was = susp_mask;
+    susp_mask &= ~reason;
+    if (was == susp_mask) return;
+    plat_log("snd: mixing %s (reasons 0x%x)", susp_mask ? "still stopped" : "restored", susp_mask);
+    if (susp_mask) return;                 /* another reason is still in force */
+    cb_t0 = 0;                             /* the delivery rate is measured again from here */
+    cb_frames = 0;
     if (stream) AAudioStream_requestStart(stream);
 }
+int snd_suspended(void) { return susp_mask; }
 
 int snd_out_rate(void) { return stream ? out_rate : 0; }
 int snd_active_voices(void) {
@@ -350,6 +361,7 @@ static void voice_start(int v, snd_t *s, int vol, int pan, int loop, int rate_hz
     o->pan = pan;
     o->loop = loop;
     o->reserved = loop ? 1 : 0;
+    o->frozen = 0;                     /* a sound started while a pause is up is heard (the panel's beep) */
     o->on = 1;
     o->serial = ++voice_serial;
     voice_gain(o);
@@ -405,9 +417,23 @@ void snd_loop_end(int ch) {
     pthread_mutex_unlock(&mix_lock);
 }
 
+/* Media::pause_samples(): a pause holds every sample where it is -- the ambient loops of a story scene
+ * come back where they stopped. The port used to call snd_stop_all() when the pause panel opened, which
+ * KILLED them: after one pause the wind, the rain and the dialogue voice of that scene were gone for
+ * good, which reads as "half of the audio goes away when you pause". A sound started while the pause is
+ * up (the panel's own confirm beep) still plays: it is not frozen. */
+void snd_pause_samples(int on) {
+    pthread_mutex_lock(&mix_lock);
+    for (int i = 0; i < MAX_VOICES; i++) {
+        if (!vox[i].on) continue;
+        vox[i].frozen = on ? 1 : 0;
+    }
+    pthread_mutex_unlock(&mix_lock);
+}
+
 void snd_stop_all(void) {
     pthread_mutex_lock(&mix_lock);
-    for (int i = 0; i < MAX_VOICES; i++) { vox[i].on = 0; vox[i].reserved = 0; }
+    for (int i = 0; i < MAX_VOICES; i++) { vox[i].on = 0; vox[i].frozen = 0; vox[i].reserved = 0; }
     pthread_mutex_unlock(&mix_lock);
 }
 
@@ -669,6 +695,7 @@ static void mix(int16_t *dst, int frames) {
         for (int v = 0; v < MAX_VOICES; v++) {
             voice_t *o = &vox[v];
             if (!o->on) continue;
+            if (o->frozen) continue;                       /* paused: silent, not advanced */
             if (!o->s || !o->s->pcm) { o->on = 0; continue; }
             int idx = (int)(o->pos >> 16);
             if (idx >= o->s->frames) {
@@ -749,7 +776,7 @@ void snd_recover(void) {
         snd_init_state();
         return;
     }
-    if (rate_settled || !stream || snd_suspended || !cb_t0) return;
+    if (rate_settled || !stream || susp_mask || !cb_t0) return;
     uint64_t dt = plat_time_us() - cb_t0;
     if (dt < 4000000ull) return;
     rate_settled = 1;

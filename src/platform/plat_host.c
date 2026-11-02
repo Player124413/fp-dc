@@ -149,6 +149,7 @@ void music_volume(int pct) { (void)pct; }
 void music_pause(void) { if (getenv("FP_TRACE_SND")) printf("music pause @%d\n", cur_frame); }
 void music_resume(void) { if (getenv("FP_TRACE_SND")) printf("music resume @%d\n", cur_frame); }
 void snd_stop_all(void) { if (getenv("FP_TRACE_SND")) printf("snd stopall @%d\n", cur_frame); }
+void snd_pause_samples(int on) { if (getenv("FP_TRACE_SND")) printf("snd pause %d @%d\n", on, cur_frame); }
 void music_update(void) {}
 void music_stop(void) { if (host_mus[0] && getenv("FP_TRACE_SND")) printf("music stop @%d\n", cur_frame); host_mus[0] = 0; }
 

@@ -16,8 +16,16 @@ void snd_free_all(void);          /* engine quit: release every resident sample 
 void snd_recover(void);           /* main loop: rebuild a lost stream, measure the delivery rate once */
 void snd_trace(int on);           /* log every voice start (sys.sndtrace: which sound is that?) */
 void snd_stop_mixer(void);        /* app exit: stop the stream and the music thread */
-void snd_suspend(void);           /* app paused: stop the stream (keeps its place in the music) */
-void snd_resume(void);
+/* Why the mixer is stopped, as a mask: the app pause, the window going away and losing the focus are
+ * three separate events, and they do not arrive in pairs on every phone (a terminated window has no
+ * INIT_WINDOW resume on some launchers, a focus loss has no gain). One flag meant a single missed pair
+ * left the stream paused for good while the game kept running -- "the sound is gone after a pause".
+ * The stream runs again only when every reason has been cleared, and each change is written into the log
+ * with the mask, so the next "no audio after pausing" report is answerable. */
+enum { SND_SUSP_APP = 1, SND_SUSP_WINDOW = 2, SND_SUSP_FOCUS = 4 };
+void snd_suspend(int reason);
+void snd_resume(int reason);
+int  snd_suspended(void);         /* the current reason mask, 0 = mixing */
 /* the audio callback's load, for the perf overlay: voices mixed and ring fill in frames */
 int  snd_active_voices(void);
 int  snd_underruns(void);

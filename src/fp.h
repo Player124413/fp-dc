@@ -71,6 +71,7 @@ int    music_serial(void);                            /* tracks started so far (
 void   music_pause(void);                          /* pause the stream in place (pause menu) */
 void   music_resume(void);
 void   snd_stop_all(void);
+void   snd_pause_samples(int on);                  /* pause panel: hold the samples (Media::pause_samples) */
 /* VMU / memory card (platform): LCD bitmap 48x32 1bpp (192 bytes, first byte top-left, MSB left);
  * saves: one small file on the first memory card that has it / has room. Return 0 / bytes read, <0 error */
 int    plat_vmu_lcd(const uint8_t bitmap[192]);

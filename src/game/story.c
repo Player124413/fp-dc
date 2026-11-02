@@ -360,7 +360,7 @@ static void pause_update(const input_t *in) {
     if (S.wipe_f) {                                         /* RE 3551 wipe, 50 frames, then the row's action */
         S.wipe_x = S.wipe_x + 32 > 0 ? 0 : S.wipe_x + 32;
         if (++S.wipe_f > 50) {
-            S.wipe_f = 0; S.paused = 0;
+            S.wipe_f = 0; S.paused = 0; snd_pause_samples(0);
             if (S.sel == 1) complete(DONE_SKIP);            /* SKIP SCENE (RV k75_g1_skip, k14_g11_skip, k76_g1_skip: the next step) */
             else if (SC[S.scene].panel == 2) complete(DONE_STAGE);   /* NEXT STAGE */
             else { csx_stop_audio(); music_stop(); story_reset(); fe_enter_from_stage(0); }   /* QUIT: the title menu (RV k75_g0_row2: frame 3) */
@@ -368,13 +368,13 @@ static void pause_update(const input_t *in) {
         return;
     }
     if (S.pause_a > 3) { S.pause_a--; return; }
-    if ((p & BTN_START) || ((p & BTN_JUMP) && S.sel == 0)) { S.paused = 0; S.pause_a = 1; music_resume(); return; }   /* RESUME */
+    if ((p & BTN_START) || ((p & BTN_JUMP) && S.sel == 0)) { S.paused = 0; S.pause_a = 1; music_resume(); snd_pause_samples(0); return; }   /* RESUME */
     if ((p & BTN_DOWN) && S.sel < 2) { S.sel++; snd_play_orig(64, 220, 128); }
     if ((p & BTN_UP) && S.sel > 0) { S.sel--; snd_play_orig(64, 220, 128); }
     if ((p & BTN_JUMP) && S.sel >= 1) {
         snd_play_orig(56, 230, 128);
         if (S.sel == 1 && SC[S.scene].skip.kind == NX_MARK) {   /* RV k75_g0_skip700: the scene jumps to its character select, no wipe */
-            S.paused = 0; S.pause_a = 1; music_resume(); csx_skip_to_chsel(); return;
+            S.paused = 0; S.pause_a = 1; music_resume(); snd_pause_samples(0); csx_skip_to_chsel(); return;
         }
         S.wipe_f = 1; S.wipe_x = -(SCREEN_W + 120);
     }
@@ -390,7 +390,10 @@ void story_update(const input_t *in) {
     if (SC[S.scene].panel == 3) { nostart = *in; nostart.held &= ~BTN_START; nostart.pressed &= ~BTN_START; in = &nostart; }
     if ((in->pressed & BTN_START) && !S.pause_a && !S.chsel && !S.done) {   /* RE 18656 */
         S.paused = 1; S.pause_a = 5; S.sel = 0;
-        music_pause(); snd_stop_all(); snd_play_orig(63, 230, 128);
+        /* RE 18656: the panel pauses every sample (Media::pause_samples), it does not KILL them. The port
+         * stopped them all, so a scene's ambient loops and the line's voice were gone for good after one
+         * pause -- "half of the audio goes away when you pause". */
+        music_pause(); snd_pause_samples(1); snd_play_orig(63, 230, 128);
         return;
     }
     par_update();

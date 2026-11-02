@@ -197,6 +197,9 @@ int snd_mem_free_kb(void) { return (int)(snd_mem_available() / 1024); }
 int snd_sample_name(int h, char *dst, int cap) { (void)h; if (dst && cap > 0) dst[0] = 0; return 0; }
 
 void snd_stop_all(void) { snd_sfx_stop_all(); }
+/* KOS has no pause for a channel, only stop: the Dreamcast keeps playing the story scene's loops through
+ * the pause panel, as it always did. The Android mixer holds them (snd_android.c snd_pause_samples). */
+void snd_pause_samples(int on) { (void)on; }
 
 void snd_play(int h, int vol, int pan) {
     if (h >= 0 && h < nsfx) snd_sfx_play(sfx[h], vol, pan);

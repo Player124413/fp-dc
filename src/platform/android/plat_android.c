@@ -291,10 +291,10 @@ static void crash_handler(int sig, siginfo_t *info, void *ctx) {
       snd_music_name(music, sizeof music);
       game_brief(gs, sizeof gs);
       n = snprintf(buf, sizeof buf,
-                   "     state: %s, screen %d, pause %d, rss %d MB, snd %d voices / %d underruns / %d steals, music %s\n"
+                   "     state: %s, screen %d, pause %d, rss %d MB, snd %d voices / %d underruns / %d steals (susp 0x%x), music %s\n"
                    "     game: %s, %d quads\n",
                    shell_in_game() ? "game" : "launcher", shell_screen(), shell_game_paused(),
-                   proc_rss_mb(), snd_active_voices(), snd_underruns(), snd_steals(), music[0] ? music : "-",
+                   proc_rss_mb(), snd_active_voices(), snd_underruns(), snd_steals(), snd_suspended(), music[0] ? music : "-",
                    gs, rgl_quad_count());
       crash_write(buf, n); }
 
@@ -1067,10 +1067,11 @@ static void on_cmd(struct android_app *app, int32_t cmd) {
     switch (cmd) {
         case APP_CMD_INIT_WINDOW:
             plat_log("cmd: init window");
+            snd_resume(SND_SUSP_WINDOW);      /* the window came back: its reason is over */
             break;
         case APP_CMD_TERM_WINDOW:
             plat_log("cmd: term window");
-            snd_suspend();
+            snd_suspend(SND_SUSP_WINDOW);
             gfx_surface_down();
             break;
         case APP_CMD_WINDOW_RESIZED:
@@ -1085,21 +1086,21 @@ static void on_cmd(struct android_app *app, int32_t cmd) {
             break;
         case APP_CMD_GAINED_FOCUS:
             s_focused = 1;
-            snd_resume();
+            snd_resume(SND_SUSP_FOCUS);
             break;
         case APP_CMD_LOST_FOCUS:
             s_focused = 0;
-            snd_suspend();
+            snd_suspend(SND_SUSP_FOCUS);
             break;
         case APP_CMD_PAUSE:
             plat_log("cmd: pause");
             s_paused = 1;
-            snd_suspend();
+            snd_suspend(SND_SUSP_APP);
             shell_save();
             break;
         case APP_CMD_RESUME:
             s_paused = 0;
-            snd_resume();
+            snd_resume(SND_SUSP_APP);
             break;
         case APP_CMD_LOW_MEMORY:
             plat_log("cmd: low memory");
@@ -1263,11 +1264,11 @@ void android_main(struct android_app *app) {
             game_brief(gs, sizeof gs);
             plat_log("frame %u: win %dx%d dp %.2f ui %dx%d, %d quads + %d sdf in %d calls, glerr 0x%x, "
                      "%s (%s, game %d quads, %u tex slots, %u sprites skipped), rss %d MB, "
-                     "snd %d voices/%d underruns/%d steals %s",
+                     "snd %d voices/%d underruns/%d steals (susp 0x%x) %s",
                      ticks, win_w, win_h, (double)dp_scale, ui_w(), ui_h(), q, sdf, fl, (unsigned)err,
                      shell_active() ? "launcher" : "game", gs, rgl_quad_count(), (unsigned)rgl_tex_slots(),
                      rgl_sprite_skips(), proc_rss_mb(),
-                     snd_active_voices(), snd_underruns(), snd_steals(),
+                     snd_active_voices(), snd_underruns(), snd_steals(), snd_suspended(),
                      music[0] ? (mbase ? mbase + 1 : music) : "-");
         }
 

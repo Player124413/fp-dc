@@ -350,12 +350,37 @@ sprite dump: over   0 texels marked '+', 1680 unchanged, 0 outside the picture
 Reading the three together answers the report without guessing: an all-`#` `drawn` with an all-`.` `over` is
 a correct frame, a `drawn` that follows the atlas but an `over` with `+` on a straight edge is an overdraw,
 and a `drawn` that is missing a slab the atlas has is the quad itself. Only the first eight poses of a level
-are dumped (three read-backs each, ~150 lines); the rest of the level logs nothing.
+are dumped (three read-backs each, ~150 lines); the rest of the level logs nothing. **Story scenes are
+covered too**: `csx_draw_actors()` runs the same three read-backs around every character it draws (props
+are skipped), so a "her sprite is broken in the cutscene" report is answered the same way as a gameplay
+one -- and the `over` pass names whatever is painted on top of her, which is how a stray prop or a dust
+effect drawn over the heroine gets identified instead of guessed at.
 
 A frame whose rect runs past its atlas is **drawn whole**, sampling past 1.0 with `GL_CLAMP_TO_EDGE`: that
 is what the Dreamcast backend has always done (it has no guard at all, the PVR clamps the sample to the edge
 of the texture), and cutting the quad here instead used to lose a strip of the picture that was whole on the
 Dreamcast. The overrun is still written into the log (`gles: frame (...) clipped to its ... atlas`).
+
+## Audio: pause, focus and the stream
+
+Two separate things stop the mixer, and both are in the log:
+
+```
+snd: mixing stopped (reasons 0x4)
+snd: mixing still stopped (reasons 0x1)
+snd: mixing restored (reasons 0x0)
+```
+
+The reasons are a mask -- `0x1` the app paused, `0x2` the window went away, `0x4` the focus was lost -- and
+the stream runs again only when every one of them has been cleared. They do not arrive in pairs on every
+phone (a terminated window has no `INIT_WINDOW` resume on some launchers), so one flag used to be able to
+leave the stream paused for good while the game kept running: "the sound is gone after a pause". The frame
+log line carries the same mask (`snd 6 voices/0 underruns/0 steals (susp 0x0) m_stage1.adp`).
+
+The **pause panel** of a story scene holds the samples instead of killing them (the original's
+`Media::pause_samples()`): the scene's ambient loops and the line's voice come back where they stopped, and
+the panel's own confirm beep is heard. They used to be stopped, which sounded like "half of the audio goes
+away when you pause".
 
 A native crash writes a self-contained block into the log before the system takes the process:
 

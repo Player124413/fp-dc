@@ -353,6 +353,54 @@ static void check_handle_generation(void) {
     stream = NULL;
 }
 
+
+/* Reported from a phone: "if u pause the game half of the audio goes away". The pause panel used to call
+ * snd_stop_all(), so every ambient loop of the story scene and the line's voice were killed and never came
+ * back. Media::pause_samples() holds them instead: silent while the panel is up, at the same position when
+ * it closes, and a sound started while it is up (the panel's own beep) is heard. */
+static void check_pause_holds_samples(void) {
+    static int16_t out[24000 * 2];
+    static int16_t pcm[22050];
+    for (int i = 0; i < 22050; i++) pcm[i] = (int16_t)((i * 97) & 0x7fff);
+    for (int i = 0; i < MAX_VOICES; i++) { vox[i].on = 0; vox[i].frozen = 0; }
+    for (int i = 0; i < MAX_SND; i++) smp[i].used = 0;
+    nsmp = 1;
+    smp[0].pcm = pcm;
+    smp[0].frames = 22050;
+    smp[0].rate = 22050;
+    smp[0].used = 1;
+    snprintf(smp[0].name, sizeof smp[0].name, "probe");
+    mus_f = NULL;
+
+    voice_start(0, &smp[0], 255, 128, 1, 0);           /* a looping ambience, as a story scene has */
+    if (!vox[0].on) { fail("the loop did not start"); return; }
+    mix(out, 24000);                                   /* half a second of it */
+    int64_t pos = vox[0].pos >> 16;
+    if (pos < 10000 || pos > 12000) { fail("the loop is at %d frames, not ~11025", (int)pos); }
+
+    snd_pause_samples(1);
+    mix(out, 24000);                                   /* half a second with the panel up */
+    if ((vox[0].pos >> 16) != pos) fail("a paused loop moved from %d to %d", (int)pos, (int)(vox[0].pos >> 16));
+    for (int i = 0; i < 4800 * 2; i++)
+        if (out[i] != 0) { fail("a paused loop still sounds (sample %d is %d)", i, out[i]); break; }
+
+    /* the panel's own beep starts while the pause is up and must be heard */
+    voice_start(1, &smp[0], 255, 128, 1, 0);
+    if (vox[1].frozen) fail("a voice started during the pause is frozen (it would be silent)");
+
+    snd_pause_samples(0);
+    if (vox[0].frozen) fail("the pause did not release the loop");
+    mix(out, 4800);
+    if ((vox[0].pos >> 16) <= pos) fail("the loop did not continue from where the pause held it");
+
+    /* snd_stop_all() is still a stop: nothing comes back from it, and nothing stays frozen */
+    snd_pause_samples(1);
+    snd_stop_all();
+    for (int i = 0; i < MAX_VOICES; i++)
+        if (vox[i].on || vox[i].frozen) { fail("voice %d survived snd_stop_all (%s)", i, vox[i].on ? "on" : "frozen"); break; }
+    snd_pause_samples(0);
+}
+
 int main(void) {
     printf("audio checks\n");
     check_stream_lifetime();
@@ -364,6 +412,7 @@ int main(void) {
     alarm(10);                       /* a deadlocked worker would otherwise hang the whole check */
     check_music_requests();
     check_long_sample();
+    check_pause_holds_samples();
     check_handle_generation();
     alarm(0);
     printf("audio %s\n", fails ? "FAILED" : "ok");

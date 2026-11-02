@@ -559,3 +559,23 @@ changed there, `over` = it changed again after her quads, and every sprite or re
 the sheet is empty, her own quad put no pixel there, or something is drawn over her. `tools/android/check_texlife.c` pins both the
 winding (a rotated quad's two triangles must agree, mirrored and scaled too) and the dump (against a synthetic read-back: half a
 sprite drawn shows up as `####....`, and a repaint after her shows up as `+`).
+
+## D-125 (Android): the story scene's sprites are dumped like gameplay's; a pause holds the samples instead of killing them
+Two reports after D-124. The first is a screenshot of a story scene with a grey mass drawn over the heroine's body, i.e. the
+same "she is not drawn all the way" class of report but in a cutscene -- and the sprite dump added in D-124 only hooked
+`player_draw()`, so the log would have said nothing about it. `csx_draw_actors()` (the path a story scene draws its characters
+through) now runs the same three read-backs around every actor whose row marks it as a character (props are skipped), so the next
+log carries the atlas/drawn/over masks for the cutscene as well, and the `over` pass names the sprite that is painted on top of
+her together with its atlas, rect and position, which is what tells a misplaced effect or a stray prop from a hole in her own
+frame.
+The second report -- "if u pause the game half of the audio goes away" -- is the story pause: it called `snd_stop_all()`, so
+every ambient loop of the scene and the line's voice were killed on the first START press and never came back, while the panel's
+own beep played on. The original pauses the samples (`Media::pause_samples()`), it does not stop them, so the Android mixer now
+freezes the active voices (`voice_t.frozen`: silent, position kept, a sound started while the pause is up is not frozen) through
+`snd_pause_samples()`, used by the story pause and its three exits. The Dreamcast's KOS has no channel pause and keeps its old
+behaviour. The suspend flag behind the AAudio stream became a reason mask (app / window / focus) with every transition written
+into the log: one flag could be left set for good when an event pair went missing (a terminated window has no `INIT_WINDOW`
+resume on some launchers), which is the other way "the sound is gone" happens.
+`tools/android/check_audio.c` pins the pause: a looping ambience neither advances nor sounds while the panel is up, a beep started
+then is heard, and the loop continues from the same position afterwards; `snd_stop_all()` still kills it. D-124's winding fix and
+dump test stay as they were.
