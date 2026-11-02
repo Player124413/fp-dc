@@ -16,8 +16,8 @@ ANDROID_SRC := $(ROOT)/src/renderer/render_gles.c $(ROOT)/src/renderer/ui_gles.c
                $(ROOT)/src/platform/android/plat_android.c $(ROOT)/src/platform/android/snd_android.c \
                $(ROOT)/src/platform/android/i18n.c
 
-.PHONY: check syntax abi twiddle font colour uiorder present texlife anim audio shell stdraw selftest preview
-check: syntax abi twiddle font colour uiorder present texlife anim audio shell stdraw selftest
+.PHONY: check syntax abi twiddle font colour uiorder present texlife anim audio shell selftest preview
+check: syntax abi twiddle font colour uiorder present texlife anim audio shell selftest
 
 syntax:
 	@for f in $(ANDROID_SRC); do echo "  syntax-check $$f"; $(CC) $(SYNTAX) $$f || exit 1; done
@@ -34,8 +34,6 @@ font:
 	@python3 make_font.py --check
 
 # the story actor draw rule (src/game/story_draw.h): what a story room draws and what it must keep hidden
-stdraw:
-	@$(CC) -std=gnu11 -Wall -Wextra -o /tmp/fpdc_check_story_draw check_story_draw.c && /tmp/fpdc_check_story_draw
 
 colour:
 	@$(CC) -std=gnu11 -Wall -Wextra -o /tmp/fpdc_check_colour check_colour.c && /tmp/fpdc_check_colour

@@ -350,32 +350,10 @@ sprite dump: over   0 texels marked '+', 1680 unchanged, 0 outside the picture
 Reading the three together answers the report without guessing: an all-`#` `drawn` with an all-`.` `over` is
 a correct frame, a `drawn` that follows the atlas but an `over` with `+` on a straight edge is an overdraw,
 and a `drawn` that is missing a slab the atlas has is the quad itself. Only the first eight poses of a level
-are dumped (three read-backs each, ~150 lines); the rest of the level logs nothing. **Story scenes are
-covered too**: `csx_draw_actors()` runs the same three read-backs around every character it draws (props
-are skipped), so a "her sprite is broken in the cutscene" report is answered the same way as a gameplay
-one -- and the `over` pass names whatever is painted on top of her, which is how a stray prop or a dust
-effect drawn over the heroine gets identified instead of guessed at.
-
-A story scene also writes its **cast** into the log, because "Carol's bike is missing" or "the cutscene
-plays wrong" needs the room's actor table, not a guess. For the first three scenes of a run, one line per
-actor, then the first draws of every scene with the spot each one lands on:
-
-```
-story dv_meet: actor 2 is playerskincarol_449 on layer 2 (skin 1)
-story dv_meet: actor 3 is carolbike_450 on layer 2 (skin 0)
-story dv_meet: actor 4 is playerskinlilac_447 on layer 2 (skin 1)
-story dv_meet: actor 3 is carolbike_450 on layer 2 (skin 0)
-story dv_meet: playerskincarol_449 (actor 2) row 812 at (312,120) vis 0 alpha 255 flip 0
-```
-
-`is <class>` is the traced class name (a heroine, a prop, an effect), `layer` is the Fusion layer it sits on,
-and the draw line says which row of the `_ens` bank it uses, **where on screen it lands** and whether the
-script's own visibility flag was 0 (the flags of a room's recycled objects are not trustworthy, see
-`src/game/story_draw.h`). Two actors printing the same `at (...)` are drawn on top of each other, and a
-class that never prints a draw line is **not drawn**: above, the bike is in the cast but has no draw line --
-a prop keeps its own visibility flag (D-126: drawing props on their placement alone put an airship over the
-Character Select screen), so a staged prop with a spoiled flag has to be fixed in the scene data, where the
-log points at the class and the row it needs.
+are dumped (three read-backs each, ~150 lines); the rest of the level logs nothing. Story scenes have no such dump, and no cast log: their rendering is the state of `cb30968` again
+(D-131). A cutscene draws each actor by the visibility flag its script sets, which is what the
+Dreamcast does -- a class that never becomes visible stays out of the picture, and a class that does
+is drawn where the script puts it.
 
 A frame whose rect runs past its atlas is **drawn whole**, sampling past 1.0 with `GL_CLAMP_TO_EDGE`: that
 is what the Dreamcast backend has always done (it has no guard at all, the PVR clamps the sample to the edge

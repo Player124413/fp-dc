@@ -653,3 +653,17 @@ spot each actor lands on (D-126), and a scene that hides a prop says so. The log
 that was drawn and where -- a `playerskincarol` line with a position in the view is drawn, and one that is missing from the draw lines is
 the bug to chase. Until that log arrives, no rule is widened again: D-126 (widening the rule to props) and D-129 (hiding props by their
 motion) both made cutscenes worse, and both were taken back.
+
+## D-131 (Android): the cutscene and scene code is the state of cb30968 again
+"At cb30968 everything was fine -- roll the cutscene or scene code back to that commit, leave the rest alone." Done literally:
+`git checkout cb30968 -- src/game/cutscene.c src/game/cutscene.h`, and `src/game/story_draw.h` (added after it) is gone.
+`git diff cb30968 -- src/game/cutscene.c src/game/cutscene.h` is empty, so a cutscene now draws exactly what it drew in that
+build: every actor by the visibility flag its script sets, no placement rule for a heroine, no nearest-pose fallback for a row
+the room's bank is short of, no cast log and no draw-line log. `tools/android/check_story_draw.c` and its `stdraw` target went
+with the rule they tested (the rule no longer exists).
+Untouched, as asked: the audio work of D-125/D-127/D-128 (the pause fix in `story.c`, the stream in `snd_android.c`), the
+launcher, the touch controls, the renderer, the data.
+This is the third rule to come and go on this bug -- D-126 widened the rule to props, D-129 hid props by their traced motion,
+and both were taken back, as is this one. What that history says is that the drawing rule was never the fault: the scenes'
+data is what differs from the original, and the way to fix it is in the scene data (`tables/story/scripts/*.scn` through
+`tools/story_rv2scn.py`), not in a wider `if` in the renderer.
