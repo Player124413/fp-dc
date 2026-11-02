@@ -140,7 +140,9 @@ static struct {
     csx_ent_t *e; int seg_first[CSX_SEGS + 1];
     char name[24], pool[CSX_POOL]; int pool_n;
     short sfx[48];
-    struct { int handle, layer, x, y, vis, row, mdx, mdy, mn, locked, add, alpha, skin, said; int16_t lx0, ly0, lx1, ly1, lt, ln;
+    int decl_left, trace_left;                            /* actor table / first draws still to be written into the log */
+    struct { char cls[48];                                /* the traced class ("carolbike_450"): the log's name for an actor */
+             int handle, layer, x, y, vis, row, mdx, mdy, mn, locked, add, alpha, skin, said; int16_t lx0, ly0, lx1, ly1, lt, ln;
              int16_t rk, rb, rc, ra; float ang; uint8_t flip; int mvo, mvl; animator_t an; } a[CSX_ACTORS];
     char *mv; int mv_n, mv_cap;                           /* session 26: the 'mv' paths (one character a frame) */
     struct { int on; double A, dA, D, dD, E, F, H, J, L; } rig;   /* session 26: the holo dragon rig (the neck's values, PL6 13342-13344) */
@@ -190,6 +192,11 @@ int csx_load(const char *path) {
     X.e = malloc(sizeof *X.e * (size_t)cap);
     if (!X.e) { free(d); return -1; }
     int seg = -1, bad = 0;
+    {   static int logged_tables;                         /* the actor table of the first scenes of the run: the log
+                                                          * then holds every class of the room and how it is placed */
+        X.decl_left = logged_tables < 3 ? 40 : 0;
+        if (X.decl_left) logged_tables++;
+    }
     char *p = d, *e = d + sz;
     while (p < e) {
         char *q = p; while (q < e && *q != '\n') q++;
@@ -271,6 +278,14 @@ int csx_load(const char *path) {
                  * recycled addresses spoil (see the draw rule below) */
                 X.a[n].skin = !strncmp(cls, "playerskin", 10) || !strncmp(cls, "player_", 7);
                 X.a[n].add = !strcmp(ink, "add"); X.a[n].alpha = ink[0] == 'a' && ink[1] >= '0' && ink[1] <= '9' ? atoi(ink + 1) : 255;
+                /* the class, for the log: "her bike is missing" / "something is drawn over her" can only be answered
+                 * with the names of the room's actors (which one is a heroine, which one a prop, where each is placed) */
+                snprintf(X.a[n].cls, sizeof X.a[n].cls, "%s", cls);
+                if (X.decl_left > 0) {
+                    X.decl_left--;
+                    plat_log("story %s: actor %d is %s on layer %d (skin %d%s)", X.name, n, cls, l,
+                             X.a[n].skin, ink[0] ? ink : "");
+                }
             } else if (!strcmp(op, "rigpart")) {               /* rigpart <actor> <kind> <B> <C> <a>: a part of the holo dragon rig */
                 int n = -1, k = 0, b = 0, c = 0, ra = 0;
                 if (sscanf(p, "%*s %d %d %d %d %d", &n, &k, &b, &c, &ra) != 5 || n < 0 || n >= X.nact) { bad = 1; break; }
@@ -349,6 +364,7 @@ static const char *line_text(int line) {                 /* "<speaker> <anim> <v
 static int line_speaker(int line) { return line >= 0 && line < X.ndlg ? atoi(X.dlg[line]) : 0; }
 
 void csx_begin(const bank_t *ens, const bank_t *font, const char *const *dialog, int nlines) {
+    X.trace_left = 24;                                    /* the first draws of the scene, with their positions */
     X.ens = ens; X.font = font; X.dlg = dialog; X.ndlg = nlines;
     X.active = X.loaded; X.seg = 0; X.clock = 0; X.cur = 0; X.exhausted = 0; X.chsel_wait = 0; X.shown = 0; X.line = -1; X.prev = 0;
     X.fade = 0; X.fade_d = 0; X.fade_rgb = 0; X.wipe = 0;
@@ -579,6 +595,11 @@ void csx_draw_actors(int pass) {
         int tv = 0;                                         /* the frame's v without the second-atlas bit */
         if (pass != 3) { x -= floorf(G.camx); y -= floorf(G.camy); }   /* json layers 6-7 do not scroll (the HUD layers) */
         if (!actor_shown(k, x, y)) continue;
+        if (X.trace_left > 0) {
+            X.trace_left--;
+            plat_log("story %s: %s (actor %d) row %d at (%.0f,%.0f) vis %d alpha %d flip %d",
+                     X.name, X.a[k].cls, k, X.a[k].row, (double)x, (double)y, X.a[k].vis, X.a[k].alpha, X.a[k].flip);
+        }
         if (X.a[k].add) r_set_additive(1);
         if (X.a[k].rk) {                                  /* a rig part: rotated, the hologram's transparency (13345: alpha 255 - L) */
             int al = X.a[k].alpha * (255 - (int)(X.rig.L < 0 ? 0 : X.rig.L > 255 ? 255 : X.rig.L)) / 255;

@@ -7,10 +7,16 @@
  * opening) Carol stands in the view and speaks while every one of her 'v' entries says 0 - the room showed the dialog
  * box over an empty jungle, which is the "missing Carol" report.
  *
- * So a heroine is drawn on the strength of what the script places: an image and a spot inside the view. The ways the
+ * So an actor is drawn on the strength of what the script places: an image and a spot inside the view. The ways the
  * original hides one still hold - the off-map sentinel (-32, -32), anything out of the view, a zero alpha, and an
- * actor the story code drives itself (the character select locks its slots). Props (gimmicks, effects, NPC sprites)
- * keep their own flag: they are another scene's leftovers, parked with visibility off.
+ * actor the story code drives itself (the character select locks its slots).
+ *
+ * The rule first applied to the heroines only, and a prop of the scene was lost that way: dv_meet shows Carol, her
+ * bike and Lilac on the cliff, and the bike's 'v' entries are as spoiled as Carol's ("the bike is missing in the
+ * Android port, the cutscene plays wrong"). A prop that the room's other scenes park is off the view or on the
+ * sentinel, which is what the two checks below are for; one that this script places inside the view belongs in the
+ * picture, heroine or not. The converter only emits an actor it saw VISIBLE in the window (tools/story_rv2scn.py,
+ * "an actor must be seen"), so being in the table at all is evidence that the object is on stage here.
  *
  * Header-only and pure, so the truth table is checked on the host: tools/android/check_story_draw.c. */
 #ifndef FP_STORY_DRAW_H
@@ -23,7 +29,8 @@ static inline int story_actor_shown(int vis, int row, int skin, int locked, int 
                                     float sx, float sy, int screen_w, int screen_h) {
     if (row < 0) return 0;                                     /* no image from the script yet */
     if (vis) return 1;                                         /* what the script says */
-    if (!skin || locked || alpha <= 0) return 0;
+    (void)skin;                                                /* props are as unreliable as heroines here */
+    if (locked || alpha <= 0) return 0;
     if (wx == -32 && wy == -32) return 0;                      /* the room's parked template */
     if (sx < -(float)STORY_DRAW_MARGIN_X || sx > (float)screen_w + STORY_DRAW_MARGIN_X) return 0;
     if (sy < -(float)STORY_DRAW_MARGIN_Y || sy > (float)screen_h + STORY_DRAW_MARGIN_X) return 0;

@@ -579,3 +579,20 @@ resume on some launchers), which is the other way "the sound is gone" happens.
 `tools/android/check_audio.c` pins the pause: a looping ambience neither advances nor sounds while the panel is up, a beep started
 then is heard, and the loop continues from the same position afterwards; `snd_stop_all()` still kills it. D-124's winding fix and
 dump test stay as they were.
+
+## D-126 (Android): a prop the script places in the view is drawn (Carol's bike), and a story scene logs its cast
+Reported with a screenshot of the original: dv_meet's cliff has Lilac, Carol AND Carol's red bike, while the port shows one heroine on an
+empty ledge ("there was supposed to be Carol's bike in here, for some reason it's missing"). The bike is an actor of the scene with a known
+image and a place in the view, but its 'v' entries are as spoiled as Carol's -- the trace's recycled addresses, the same bug D-12x's
+`story_actor_shown()` was written for -- and that rule drew only heroines on the strength of their placement, so the bike was dropped with
+every other prop whose flag says 0. `tools/story_rv2scn.py` only emits an actor it saw VISIBLE inside the view ("an actor must be seen: a
+story room holds the props of all its scenes"), so being in the table is already evidence that the object is on stage; the checks that
+matter for a room's parked leftovers (the (-32,-32) sentinel, out of the view, a zero alpha, the character select's locked slots) all stay.
+The rule is now the same for a heroine and for a prop.
+The rest of the report -- "the cutscene plays wrong" -- cannot be answered from a screenshot, so the scene writes its cast: for the first
+three scenes of a run one log line per actor (`actor <n> is <class> on layer <l> (skin <s>)`), then the first draws of every scene with the
+spot each actor lands on (`<class> (actor <n>) row <r> at (x,y) vis <v> alpha <a> flip <f>`). Two actors printing the same spot are drawn on
+top of each other; a class that never prints a draw line is not drawn at all. Together with D-124/D-125's sprite dump (which now covers
+`csx_draw_actors` too) a misplaced or missing prop is named from the log instead of guessed at.
+`tools/android/check_story_draw.c` pins the new halves: a prop with v=0 inside the view draws, the same prop parked on the sentinel or off the
+view does not, and a prop with no image still does not.
