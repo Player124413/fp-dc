@@ -98,6 +98,9 @@ Active animation id (byte at +0xb1; the old image-table labels said 17 for skid,
 ## Move overlay effects (RV `build/re/fx` probes: TRACE_ADDOBJ / sparkle positions; RE events 2043, 2834, 2844, 2845)
 - Cyclone (M26): RingSparkle_142 every 6 frames from the first M26 frame at (int X, int Y) + rand 0..40 − 20 per axis; an invisible ShieldInstaShield_407 is created with it. Energy −0.25 per frame (state at frame start).
 - Charge and boost (M5): RingSparkle every other frame at ±8. PlayerOthers D = 1, E = 29 during M5 (and for 29 frames after).
+- The sparkles are drawn additively (Chowdren shader 0x20, as the shields and the strobes are): the twinkle has a dark
+  ring that the additive pass adds almost nothing for, so an opaque draw turns it into a hard blue outline - the "white
+  plus sign over the heroine" a phone report showed during a boost. `fx_draw` (player.c) sets the additive state now.
 - Invincibility (Others D = 1; boost or monitor): Sparkle1_316…Sparkle4_400 orbit an anchor (int X, int Y − 4): 1/2 at radius 20, D +7°/frame, 180° apart; 3/4 at radius 10, +10°/frame. Position = anchor + r·(sin D, −cos D). Anchors follow Lilac every 3 frames (1/2) and 6 frames (3/4). Every 6 frames a Sparkle5_284 (anim 4, plays once) is left at each orbiting sparkle.
 
 ## Comparison harness

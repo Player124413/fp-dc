@@ -53,6 +53,9 @@ static uint32_t fx_seed = 1;
 static int fx_rand(int n) { fx_seed = fx_seed * 0x343fdu + 0x269ec3u; return (int)((((fx_seed >> 16) & 0x7fff) * (uint32_t)n) >> 15); }
 int cross_rand(int n) { return fx_rand(n); }
 int cross_rand_raw(int n) { return fx_rand(n); }   /* the same LCG step (camera shake events consume it every frame) */    /* the original's single cross_seed LCG is shared by effects and enemies */
+static int fx_trace_left;                     /* sparkle draws still to be written into the log (see fx_draw) */
+static void player_trace(const char *what, const bank_t *b, const animator_t *an, const frame_t *f, int flip, float rot);
+
 static void pfx_spawn(float x, float y, int anim) {
     if (anim < 0) return;
     for (int i = 0; i < NPFX; i++)
@@ -698,9 +701,19 @@ static void fx_update(player_t *p, int st0) {
         }
 }
 
+/* The sparkles are light: the original draws them with the additive shader (Chowdren 0x20, the one the elemental
+ * shields, the strobes and every other glow in this port use).  Drawn opaquely, the dark ring around the twinkle -
+ * which the additive pass adds almost nothing for - becomes a hard blue outline, and the whole thing reads as a white
+ * plus sign stuck over the heroine instead of a glint in the air.  Reported from a phone with a screenshot of exactly
+ * that during a boost. */
 static void fx_draw(void) {
+    r_set_additive(1);
     for (int i = 0; i < NPFX; i++)
-        if (pfx[i].an.b) frame_draw(pfx[i].an.b, anim_frame(&pfx[i].an), floorf(pfx[i].x - G.camx), floorf(pfx[i].y - G.camy), 0, pfx[i].argb);
+        if (pfx[i].an.b) {
+            const frame_t *f = anim_frame(&pfx[i].an);
+            if (fx_trace_left > 0) { fx_trace_left--; player_trace("sparkle", pfx[i].an.b, &pfx[i].an, f, 0, 0.f); }
+            frame_draw(pfx[i].an.b, f, floorf(pfx[i].x - G.camx), floorf(pfx[i].y - G.camy), 0, pfx[i].argb);
+        }
     if (spk.on && spk.an.b)
         for (int k = 0; k < 4; k++) {
             double d = (k < 2 ? spk.d1 : spk.d3) + (k & 1) * 180.0, r = k < 2 ? 20 : 10;
@@ -708,6 +721,7 @@ static void fx_draw(void) {
             frame_draw(&G.objs, anim_frame(&spk.an), (float)floor(ax + r * fd_sin(d / 57.29577951308232) - G.camx),
                        (float)floor(ay - r * fd_cos(d / 57.29577951308232) - G.camy), 0, 0xffffffff);
         }
+    r_set_additive(0);
 }
 
 /* ---- ladders (RE: build/re/spec_ladder.md; original traces ladder_*) ------------------------------
@@ -1334,6 +1348,7 @@ void player_unload_banks(void) {
     for (int i = 0; i < NPFX; i++) pfx[i].an.b = NULL;
     G.p.an.b = NULL;
     draw_trace_left = 24;                     /* the first draws of the new level go into the log */
+    fx_trace_left = 16;                       /* and the first sparkle draws, which are small enough to go wrong alone */
 }
 
 /* What the heroine is actually drawn with. A report about "the sprite looks wrong" cannot be answered
