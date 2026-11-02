@@ -14,7 +14,11 @@ static void expect(const char *what, int got, int want) {
     else printf("  %-58s ok\n", what);
 }
 static int shown(int vis, int row, int skin, int locked, int alpha, int wx, int wy, float sx, float sy) {
-    return story_actor_shown(vis, row, skin, locked, alpha, wx, wy, sx, sy, SW, SH);
+    return story_actor_shown(vis, row, skin, locked, alpha, wx, wy, sx, sy, SW, SH, 0);
+}
+/* the same, with the motion the script gives the actor: how many times it reverses by more than STORY_FLIP_PX */
+static int shown_j(int vis, int row, int skin, int locked, int alpha, int wx, int wy, float sx, float sy, int flips) {
+    return story_actor_shown(vis, row, skin, locked, alpha, wx, wy, sx, sy, SW, SH, flips);
 }
 
 int main(void) {
@@ -34,6 +38,13 @@ int main(void) {
     /* tall sprites: the feet are in the view, the head hangs above it */
     expect("feet on the ground, head above the screen: drawn", shown(0, 3, 1, 0, 255, 950, 1300, 371, 231), 1);
     expect("one pixel of the frame just past the margin: hidden", shown(0, 3, 1, 0, 255, 950, 1189, 5000, 120), 0);
+    /* the extra sprites of a cutscene: the trace wrote another object's motion into a prop (dv_meet's explosions
+     * swing +2213 then -2213 px on consecutive frames and land on the heroine's own position).  Such a prop is not
+     * drawn even when its own visibility flag says 1; a heroine is not judged by it, and a prop that moves for real
+     * (a walk, a charge: < STORY_FLIPS_JUNK reversals) keeps its flag. */
+    expect("a prop with v=1 that the script reverses is not drawn", shown_j(1, 7, 0, 0, 255, 700, 1189, 371, 120, STORY_FLIPS_JUNK), 0);
+    expect("one reversal is still motion: the prop keeps its flag", shown_j(1, 7, 0, 0, 255, 700, 1189, 371, 120, STORY_FLIPS_JUNK - 1), 1);
+    expect("a heroine the script reverses is drawn by her placement", shown_j(0, 3, 1, 0, 255, 950, 1189, 371, 120, 133), 1);
     printf("story draw: %s\n", fails ? "FAILED" : "ok");
     return fails ? 1 : 0;
 }

@@ -18,16 +18,28 @@
  * other scene of it, so its own flag is the only thing that tells the two apart; the bike is found in the log instead
  * (see the cast lines below and android/README.md), not by widening this rule.
  *
+ * The flag is not enough either, because a recycled address does not only spoil visibility: it writes another
+ * object's MOTION into the actor. The script's '<t> m <actor> <dx> <dy> <frames>' is that object's velocity for
+ * one frame, and a real prop does not reverse a couple of hundred pixels between two frames -- the corrupted entries do,
+ * hundreds of times (dv_meet's explosions swing +2213 then -2213 px on consecutive frames, and land on the
+ * heroine's own position). Those are the sprites that appear on the jungle ledge during a quiet line of dialog:
+ * "there are extra sprites in the cutscenes, they are not like the Dreamcast". So a prop whose script throws it
+ * back and forth (STORY_FLIPS_JUNK sign reversals of more than STORY_FLIP_PX) is not drawn at all. A heroine is
+ * not judged by it: her motion is equally noisy, and her own row is what the scene stages.
+ *
  * Header-only and pure, so the truth table is checked on the host: tools/android/check_story_draw.c. */
 #ifndef FP_STORY_DRAW_H
 #define FP_STORY_DRAW_H
 
 #define STORY_DRAW_MARGIN_X 96          /* how far past the screen edges a standing actor is still "in the view" */
 #define STORY_DRAW_MARGIN_Y 160         /* tall sprites hang above their feet: their top may start off screen */
+#define STORY_FLIP_PX 200               /* a one-frame step this large that reverses sign is not motion */
+#define STORY_FLIPS_JUNK 2              /* two of them: the trace wrote another object's velocity into this actor */
 
 static inline int story_actor_shown(int vis, int row, int skin, int locked, int alpha, int wx, int wy,
-                                    float sx, float sy, int screen_w, int screen_h) {
+                                    float sx, float sy, int screen_w, int screen_h, int flips) {
     if (row < 0) return 0;                                     /* no image from the script yet */
+    if (!skin && flips >= STORY_FLIPS_JUNK) return 0;          /* a prop thrown back and forth: not this scene's */
     if (vis) return 1;                                         /* what the script says */
     if (!skin || locked || alpha <= 0) return 0;
     if (wx == -32 && wy == -32) return 0;                      /* the room's parked template */

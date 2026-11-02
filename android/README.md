@@ -356,6 +356,18 @@ are skipped), so a "her sprite is broken in the cutscene" report is answered the
 one -- and the `over` pass names whatever is painted on top of her, which is how a stray prop or a dust
 effect drawn over the heroine gets identified instead of guessed at.
 
+A prop the trace spoils is **not drawn**, and says so:
+
+```
+story dv_meet: effectsexplosion06_435 (actor 83) is not drawn: the script reverses its motion 52 times (another object's data in this trace)
+```
+
+A story room recycles the memory of the objects it destroys, so a prop's recorded velocity can be another object's: the
+script then throws it thousands of pixels one way and back on consecutive frames, and it lands on top of the heroine instead
+of where the object really stood (D-129). Those are the "extra sprites" over a quiet line of dialog -- in dv_meet that is 21
+of the room's explosion and sparkle actors, none of them visible in the original at that moment. Real motion (a walk, a
+charge) does not reverse a 200-pixel step, so those props keep drawing; a heroine is never judged by this rule.
+
 A story scene also writes its **cast** into the log, because "Carol's bike is missing" or "the cutscene
 plays wrong" needs the room's actor table, not a guess. For the first three scenes of a run, one line per
 actor, then the first draws of every scene with the spot each one lands on:
